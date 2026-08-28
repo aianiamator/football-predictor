@@ -1,22 +1,38 @@
-import { useState } from "react"
-import { isSpeechAvailable, speak, stopSpeaking } from "../lib/speech"
+import { useEffect, useState } from "react"
+import { isSpeechAvailable, speak, stopSpeaking, pickVoice } from "../lib/speech"
+import type { Lang } from "../i18n"
 
 /**
- * Reads a forecast aloud. Hidden entirely when the device has no speech,
- * because a button that does nothing is worse than no button.
+ * Reads a forecast aloud. Hidden entirely when the device has no speech at
+ * all, because a button that does nothing is worse than no button.
+ *
+ * The voice is chosen for the reader's language, preferring Nigerian English
+ * when the language itself is not installed - see lib/speech.ts.
  */
 export default function SpeakButton({
   text,
-  voiceLang,
+  lang,
   label,
   size = 56,
 }: {
   text: string
-  voiceLang: string
+  lang: Lang
   label: string
   size?: number
 }) {
   const [speaking, setSpeaking] = useState(false)
+  const [voiceName, setVoiceName] = useState<string | null>(null)
+
+  useEffect(() => {
+    let alive = true
+    pickVoice(lang).then((v) => {
+      if (alive) setVoiceName(v?.name ?? null)
+    })
+    return () => {
+      alive = false
+    }
+  }, [lang])
+
   if (!isSpeechAvailable()) return null
 
   const toggle = () => {
@@ -25,10 +41,10 @@ export default function SpeakButton({
       setSpeaking(false)
       return
     }
-    speak(text, voiceLang)
+    void speak(text, lang)
     setSpeaking(true)
-    // There is no reliable "finished" event across Android browsers, so fall
-    // back to a rough estimate from the length of the sentence.
+    // No reliable "finished" event across Android browsers, so estimate from
+    // the length of the sentence.
     window.setTimeout(() => setSpeaking(false), Math.max(3000, text.length * 80))
   }
 
@@ -36,7 +52,8 @@ export default function SpeakButton({
     <button
       type="button"
       onClick={toggle}
-      aria-label={label}
+      aria-label={voiceName ? `${label} (${voiceName})` : label}
+      title={voiceName ?? undefined}
       className="tap surface flex shrink-0 items-center justify-center rounded-full border active:scale-95"
       style={{ width: size, height: size }}
     >

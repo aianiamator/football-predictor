@@ -75,13 +75,11 @@ export default function MatchDetail({
   p,
   league,
   lang,
-  voice,
   onBack,
 }: {
   p: Prediction
   league?: LeagueMeta
   lang: Lang
-  voice: string
   onBack: () => void
 }) {
   const d = dict(lang)
@@ -147,7 +145,7 @@ export default function MatchDetail({
             {sentence}
           </p>
         </div>
-        <SpeakButton text={spoken} voiceLang={voice} label={d.listen} />
+        <SpeakButton text={spoken} lang={lang} label={d.listen} />
       </div>
 
       {/* Likely goals */}

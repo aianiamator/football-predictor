@@ -10,14 +10,12 @@ export default function Matches({
   leagues,
   loading,
   lang,
-  voice,
   onOpen,
 }: {
   predictions: Prediction[] | null
   leagues: LeagueMeta[]
   loading: boolean
   lang: Lang
-  voice: string
   onOpen: (p: Prediction) => void
 }) {
   const d = dict(lang)
@@ -75,7 +73,6 @@ export default function Matches({
               key={p.id}
               p={p}
               lang={lang}
-              voice={voice}
               league={byCode.get(p.league_code)}
               onOpen={() => onOpen(p)}
             />

@@ -50,6 +50,26 @@ megabyte:
   only refreshes it. A reader on a dead connection still sees the last
   forecasts they downloaded, with an honest banner saying so.
 
+## The speaking voice
+
+The browser can only use voices already installed on the reader's device — an
+app cannot ship one. So `src/lib/speech.ts` ranks what is present:
+
+1. the actual language (`yo-NG`, `ha-NG`, `ig-NG`)
+2. **Nigerian English**, which pronounces Yoruba and Igbo names far closer to
+   right than an American voice does
+3. other African English — Ghana, South Africa, Kenya
+4. British English, closer to Nigerian English than American is
+5. American English only as a last resort
+
+It also handles two real quirks: Chrome returns an empty voice list until it
+fires `voiceschanged` (so the first tap used to get a random default), and some
+Android voices carry the country in the NAME rather than the language tag.
+
+Readers get a much better voice by installing Google Text-to-Speech and adding
+their language under Settings › Accessibility. Nothing in the app can do that
+for them.
+
 ## Structure
 
 ```

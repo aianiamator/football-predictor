@@ -30,13 +30,11 @@ export function kickoffLabel(p: Prediction, lang: Lang): { day: string; time: st
 export default function MatchCard({
   p,
   lang,
-  voice,
   league,
   onOpen,
 }: {
   p: Prediction
   lang: Lang
-  voice: string
   league?: LeagueMeta
   onOpen: () => void
 }) {
@@ -96,7 +94,7 @@ export default function MatchCard({
             {sentence}
           </p>
         </div>
-        <SpeakButton text={sentence} voiceLang={voice} label={d.listen} />
+        <SpeakButton text={sentence} lang={lang} label={d.listen} />
       </div>
     </article>
   )

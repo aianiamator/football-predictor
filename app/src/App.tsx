@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useState } from "react"
 import Footer from "./components/Footer"
 import LanguagePicker from "./components/LanguagePicker"
 import OfflineBanner from "./components/OfflineBanner"
@@ -6,7 +6,7 @@ import Matches from "./screens/Matches"
 import MatchDetail from "./screens/MatchDetail"
 import TrackRecord from "./screens/TrackRecord"
 import { files, loadWithCache, readCache } from "./api"
-import { LANGS, dict, loadLang, saveLang, type Lang } from "./i18n"
+import { dict, loadLang, saveLang, type Lang } from "./i18n"
 import type { Meta, Prediction, TrackRecord as TR } from "./types"
 import { stopSpeaking } from "./lib/speech"
 
@@ -23,7 +23,6 @@ export default function App() {
   const [loading, setLoading] = useState(true)
 
   const d = dict(lang)
-  const voice = useMemo(() => LANGS.find((l) => l.code === lang)?.voice ?? "en-GB", [lang])
 
   useEffect(() => {
     // Cached data renders on the first paint; the network only refreshes it.
@@ -74,7 +73,6 @@ export default function App() {
           p={view.p}
           league={leagues.find((l) => l.code === view.p.league_code)}
           lang={lang}
-          voice={voice}
           onBack={closeDetail}
         />
       </div>
@@ -107,7 +105,6 @@ export default function App() {
           leagues={leagues}
           loading={loading}
           lang={lang}
-          voice={voice}
           onOpen={openDetail}
         />
       ) : (
