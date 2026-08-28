@@ -1,0 +1,12 @@
+# Cloudflare Pages configuration.
+#
+# The dashboard's "build output directory" field has moved around between
+# versions of the Cloudflare UI. Declaring it here means the setting lives with
+# the code and cannot be lost or mistyped in a form.
+#
+# Paths are relative to the project root directory set in the dashboard, which
+# is "app".
+
+name = "football-predictor"
+compatibility_date = "2026-08-28"
+pages_build_output_dir = "./dist"
