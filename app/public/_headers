@@ -1,0 +1,19 @@
+# Cloudflare Pages caching rules.
+#
+# This file is why we do not need to hunt for a Cache Rule in the Cloudflare
+# dashboard - Pages reads it automatically.
+
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# Forecasts change weekly. Cache briefly, and let the edge serve a stale copy
+# while it refetches, so a slow origin never blocks a reader.
+/data/*
+  Cache-Control: public, max-age=600, stale-while-revalidate=86400
+
+# The shell and the worker must never be cached, or an update can never reach
+# anyone who already has the old one.
+/index.html
+  Cache-Control: no-cache
+/sw.js
+  Cache-Control: no-cache

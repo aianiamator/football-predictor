@@ -1,0 +1,73 @@
+# Runs the forecasting engine on a schedule, with no server to look after.
+#
+# Two schedules, exactly what cron would do on a box:
+#   05:30 daily     fits every league and forecasts upcoming fixtures
+#   every 6 hours   fills in results for matches that have finished
+#
+# Both commit their output back to the repository, which is what makes the
+# website update. The SQLite file is committed too: it is the durable record of
+# what was forecast BEFORE each match, which is what makes the public track
+# record trustworthy. Keeping it in git gives it free version history as well.
+
+name: Forecasts
+
+on:
+  schedule:
+    - cron: "30 5 * * *"
+    - cron: "0 */6 * * *"
+  workflow_dispatch:
+
+# One run at a time. Two runs writing the same database would corrupt it - the
+# same reason the server version takes a lock.
+concurrency:
+  group: forecasts
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # The guard that matters most. If this fails, future information is
+      # reaching the training data and nothing should be published.
+      - name: Leakage audit
+        run: python -m tests.test_leakage
+
+      - name: Store guarantees
+        run: python -m tests.test_store
+
+      - name: Forecast upcoming fixtures
+        if: github.event.schedule != '0 */6 * * *'
+        run: python -m engine.run
+
+      - name: Settle finished matches
+        if: github.event.schedule != '30 5 * * *'
+        run: python -m engine.settle
+
+      - name: Publish
+        run: |
+          git config user.name "forecast-bot"
+          git config user.email "actions@github.com"
+          git add -f output/*.json data/forecasts.db
+          if git diff --cached --quiet; then
+            echo "Nothing changed. Between rounds this is normal, not a failure."
+          else
+            git commit -m "Forecasts: $(date -u '+%Y-%m-%d %H:%M UTC')"
+            git push
+          fi
+
+      - name: Summary
+        if: always()
+        run: python tools/ci_summary.py >> "$GITHUB_STEP_SUMMARY"
