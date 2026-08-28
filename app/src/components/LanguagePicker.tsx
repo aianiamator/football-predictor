@@ -13,7 +13,7 @@ export default function LanguagePicker({
 }) {
   return (
     <div className="-mx-4 overflow-x-auto px-4" style={{ scrollbarWidth: "none" }}>
-      <div className="flex gap-2">
+      <div className="flex w-max gap-2">
         {LANGS.map((l) => {
           const on = l.code === lang
           return (
@@ -24,7 +24,7 @@ export default function LanguagePicker({
               aria-pressed={on}
               lang={l.code}
               className={
-                "tap whitespace-nowrap rounded-full border-2 px-4 font-semibold" +
+                "tap shrink-0 whitespace-nowrap rounded-full border-2 px-4 font-semibold" +
                 (on
                   ? " border-slate-900 bg-slate-900 text-white dark:border-slate-100 dark:bg-slate-100 dark:text-slate-900"
                   : " surface")

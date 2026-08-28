@@ -17,12 +17,15 @@ export default function LeagueFilter({
   onSelect: (code: string | null) => void
   allLabel: string
 }) {
+  // shrink-0 is load-bearing. Without it flexbox compresses each button down to
+  // the 56px minimum tap size and clips the league name to a letter or two,
+  // which is exactly the failure this row exists to avoid.
   const base =
-    "tap flex items-center gap-2 whitespace-nowrap rounded-full border-2 px-4 font-semibold"
+    "tap shrink-0 flex items-center gap-2 whitespace-nowrap rounded-full border-2 px-4 font-semibold"
 
   return (
     <div className="-mx-4 overflow-x-auto px-4 pb-1" style={{ scrollbarWidth: "none" }}>
-      <div className="flex gap-2">
+      <div className="flex w-max gap-2">
         <button
           type="button"
           onClick={() => onSelect(null)}
