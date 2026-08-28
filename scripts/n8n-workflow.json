@@ -1,0 +1,94 @@
+{
+  "name": "Football forecasts",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            { "field": "cronExpression", "expression": "30 5 * * *" }
+          ]
+        }
+      },
+      "id": "trigger-predictions",
+      "name": "Daily 05:30 - forecasts",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [-360, -120]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            { "field": "cronExpression", "expression": "0 */6 * * *" }
+          ]
+        }
+      },
+      "id": "trigger-settle",
+      "name": "Every 6h - results",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [-360, 140]
+    },
+    {
+      "parameters": {
+        "command": "=/srv/football-predictor/scripts/run_predictions.sh"
+      },
+      "id": "run-predictions",
+      "name": "Run forecasts",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [-100, -120],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "command": "=/srv/football-predictor/scripts/run_settle.sh"
+      },
+      "id": "run-settle",
+      "name": "Settle results",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [-100, 140],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "command": "=/srv/football-predictor/scripts/healthcheck.sh"
+      },
+      "id": "healthcheck",
+      "name": "Healthcheck",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [160, 0],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "content": "## Football forecasts\n\nTwo scheduled jobs, both calling the same scripts cron would call.\n\n**Use n8n OR cron, never both.** The scripts take a flock so they cannot corrupt each other, but half your runs will log \"skipping\" and you will lose an afternoon working out why.\n\nEdit the paths if APP_DIR is not /srv/football-predictor.\n\nThe healthcheck exits non-zero when anything is wrong, so its error branch is where to hang a notification.\n\nZero upcoming forecasts is usually NOT a fault: football-data publishes fixtures only a few days before each round.",
+        "height": 340,
+        "width": 420
+      },
+      "id": "note",
+      "name": "Read me",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-360, 340]
+    }
+  ],
+  "connections": {
+    "Daily 05:30 - forecasts": {
+      "main": [[{ "node": "Run forecasts", "type": "main", "index": 0 }]]
+    },
+    "Every 6h - results": {
+      "main": [[{ "node": "Settle results", "type": "main", "index": 0 }]]
+    },
+    "Run forecasts": {
+      "main": [[{ "node": "Healthcheck", "type": "main", "index": 0 }]]
+    },
+    "Settle results": {
+      "main": [[{ "node": "Healthcheck", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "pinData": {}
+}

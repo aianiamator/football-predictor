@@ -53,6 +53,8 @@ data/forecasts.db   The durable record. Generated, gitignored.
 tests/           Simulated-data verification, leakage audit, store guarantees,
                  payload + product-constraint checks.
 tools/dev_seed.py  DEV-ONLY data generator. Never publish its output.
+scripts/         Deployment: cron job wrappers, healthcheck, deploy, n8n.
+DEPLOY.md        How it runs on the Hetzner box, and how to check it is.
 app/             Vite + TS + Tailwind PWA. Read-only, no keys. React is
                  aliased to preact/compat: ~20.6 KB gzipped shell.
 ```
@@ -160,7 +162,9 @@ python -m engine.backtest       # full walk-forward backtest (~3 min, 7 leagues)
 python -m engine.run            # fit, predict fixtures, publish
 python -m engine.settle         # fill in results on past predictions
 
+python -m tests.test_settle     # settle job against real results
 python -m tools.dev_seed        # DEV data for the app (never publish it)
+./scripts/healthcheck.sh        # is it actually running? exits non-zero if not
 npm install --prefix app
 npm run dev --prefix app        # http://localhost:5178
 npm run build --prefix app      # VITE_DATA_URL=<cdn> to point at Cloudflare
@@ -181,6 +185,30 @@ See `app/README.md`. Three things worth knowing before touching it:
 3. **Translation never parses English.** The engine publishes `summary_key` +
    `summary_args`; the app looks up a template. Adding a language touches only
    `src/i18n.ts`.
+
+## Operations
+
+Scheduled on the Hetzner box (see `DEPLOY.md`):
+
+- `scripts/run_predictions.sh` daily at 05:30 — forecasts
+- `scripts/run_settle.sh` every 6 hours — results, which make the record real
+- `scripts/healthcheck.sh` daily — exits non-zero when something has stopped
+
+Both jobs take a `flock`, so a slow run can never be overtaken by the next one
+and corrupt the database.
+
+Two failure modes worth knowing:
+
+1. **The silent stall.** Jobs exit 0, publish nothing, and the site keeps
+   serving last week's forecasts looking entirely normal. `publish freshness`
+   in the healthcheck is what catches it.
+2. **Zero upcoming forecasts is usually NOT a fault.** football-data publishes
+   fixtures only days before each round, so between rounds the feed is
+   legitimately empty and the engine correctly refuses to forecast matches
+   already played. Check the feed before debugging the engine.
+
+`npm run build` refuses to run while `app/public/data/` exists, so dev data
+with invented fixtures can never be shipped as real forecasts.
 
 ## Secrets
 

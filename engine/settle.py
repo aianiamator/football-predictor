@@ -29,9 +29,10 @@ MIN_AGE_HOURS = 3
 
 
 def settle(leagues: list[str] | None = None, n_seasons: int = 2,
-           publish: bool = True) -> dict:
+           publish: bool = True, db=None, out=None) -> dict:
     leagues = leagues or dataio.CORE_LEAGUES
-    conn = store.connect()
+    out = out or OUT
+    conn = store.connect(db)
     try:
         pending = conn.execute(
             "select id, league_code, date, home_team, away_team "
@@ -41,7 +42,7 @@ def settle(leagues: list[str] | None = None, n_seasons: int = 2,
         if not pending:
             print("Nothing awaiting a result.")
             if publish:
-                print("Published:", store.publish_json(conn, OUT))
+                print("Published:", store.publish_json(conn, out))
             return {"settled": 0, "pending": 0, "not_found": 0}
 
         print(f"{len(pending)} forecast(s) awaiting a result.")
@@ -85,7 +86,7 @@ def settle(leagues: list[str] | None = None, n_seasons: int = 2,
                       f"({100.0 * acc['hits'] / acc['n']:.1f}%)")
 
         if publish:
-            published = store.publish_json(conn, OUT)
+            published = store.publish_json(conn, out)
             print(f"Published: {published['upcoming']} upcoming, "
                   f"{published['settled']} settled")
 

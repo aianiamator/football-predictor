@@ -11,6 +11,7 @@ Run:  python -m engine.run
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -28,7 +29,10 @@ from .model import fit
 # renders it in the reader's own zone.
 SOURCE_TZ = ZoneInfo("Europe/London")
 
-OUT = Path(__file__).resolve().parent.parent / "output"
+# Where the published JSON is written. On a server, point this straight at the
+# directory nginx serves, so there is no copy step that can silently fail and
+# leave the site showing last week's forecasts.
+OUT = Path(os.getenv("FORECAST_OUT", Path(__file__).resolve().parent.parent / "output"))
 
 # Leagues where over/under 2.5 is shown at all. Everywhere else the section is
 # hidden entirely — a forecast that cannot beat "always say over" by a visible
