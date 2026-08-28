@@ -31,3 +31,10 @@ app/.env.*
 # Backtest outputs
 backtest_summary.csv
 backtest_predictions.csv
+
+# Dev-only seeded data, never published
+app/public/data/
+data/dev_forecasts.db*
+
+# TS build info
+*.tsbuildinfo

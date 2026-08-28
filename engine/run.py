@@ -16,17 +16,30 @@ from pathlib import Path
 
 import pandas as pd
 
+from zoneinfo import ZoneInfo
+
 from . import data as dataio
 from . import store
 from .model import fit
 
+# football-data publishes kick-off times in UK local time. Nigeria is UTC+1 all
+# year, the UK is UTC+0 in winter, so from late October to late March a raw time
+# is an hour early for the audience. Everything is published as UTC and the app
+# renders it in the reader's own zone.
+SOURCE_TZ = ZoneInfo("Europe/London")
+
 OUT = Path(__file__).resolve().parent.parent / "output"
 
-# Leagues where the over/under 2.5 edge cleared 2pp in backtesting.
-# Everywhere else the market is not shown at all — a forecast that can't
-# beat "always say over" by a visible margin is noise dressed as insight.
-# Re-derive this list from backtest_summary.csv whenever you refit.
-OVER_UNDER_LEAGUES = {"SP1", "P1"}
+# Leagues where over/under 2.5 is shown at all. Everywhere else the section is
+# hidden entirely — a forecast that cannot beat "always say over" by a visible
+# margin is noise dressed as insight.
+#
+# Two tests must BOTH pass: the forecast beats the always-majority baseline by
+# 2pp or more, AND its probabilities score better than baseline (Brier). Ligue 1
+# clears the first (+2.52pp) but fails the second, so it is excluded: picking the
+# right side slightly more often with worse probabilities is luck, not signal.
+# Re-derive from backtest_summary.csv whenever you refit.
+OVER_UNDER_LEAGUES = {"P1", "SP1", "I1", "E0"}
 
 # Plain-language confidence bands.
 #
@@ -34,22 +47,41 @@ OVER_UNDER_LEAGUES = {"SP1", "P1"}
 # showed the top bands are overconfident: a stated 74% lands near 72%, a stated
 # 93% near 82%. So "strong" starts at 0.70, not 0.65, and nothing above that
 # gets stronger language — the model has not earned it.
+# Colours are chosen so that grey never means two things at once: the draw
+# segment of the three-way bar is a COOL slate, so low confidence here is a
+# WARM stone. All three pass contrast on a cheap screen in daylight.
 def confidence_band(p: float) -> tuple[str, int, str]:
     if p >= 0.70:
-        return "strong", 3, "#16a34a"
+        return "strong", 3, "#15803d"    # green
     if p >= 0.52:
-        return "moderate", 2, "#ca8a04"
-    return "close", 1, "#6b7280"
+        return "moderate", 2, "#b45309"  # amber
+    return "close", 1, "#78716c"         # warm stone
 
 
-def plain_summary(pred: dict) -> str:
-    """
-    One short sentence, no jargon, readable at primary-school level.
+def kickoff_to_utc(date, kickoff: str) -> str | None:
+    """Combine a match date and UK local kick-off into a UTC timestamp."""
+    if not kickoff or ":" not in str(kickoff):
+        return None
+    try:
+        hh, mm = str(kickoff).split(":")[:2]
+        naive = pd.Timestamp(date).normalize() + pd.Timedelta(hours=int(hh), minutes=int(mm))
+        local = naive.tz_localize(SOURCE_TZ, nonexistent="shift_forward", ambiguous=True)
+        return local.tz_convert("UTC").isoformat()
+    except (ValueError, TypeError):
+        return None
+
+
+def summarise_outcome(pred: dict) -> tuple[str, dict, str]:
+    """Return (key, arguments, English sentence).
+
+    The app rebuilds this sentence in the reader's language from the key and
+    the arguments. It must never have to parse the English text, which would
+    break the moment any wording changed.
 
     Never a single-outcome verdict. Across backtesting the model named a draw
     as most likely in 0.5% of matches while a quarter actually ended level, so
-    any bare "X will win" sentence is misleading by construction. Every
-    favourite sentence therefore carries the draw or the upset alongside it.
+    a bare "X will win" is misleading by construction. Every favourite sentence
+    therefore carries the draw or the upset alongside it.
     """
     home, away = pred["home_team"], pred["away_team"]
     probs = {home: pred["home_win"], "draw": pred["draw"], away: pred["away_win"]}
@@ -58,19 +90,30 @@ def plain_summary(pred: dict) -> str:
     draw_pct = round(pred["draw"] * 100)
 
     if top == "draw":
-        return f"{home} and {away} look evenly matched. A draw is very possible."
+        return ("evenly_matched", {"home": home, "away": away},
+                f"{home} and {away} look evenly matched. A draw is very possible.")
     if p >= 0.70:
-        return f"{top} are the strong favourite, but {draw_pct} in 100 games like this end in a draw."
+        return ("strong_favourite", {"team": top, "draw_pct": draw_pct},
+                f"{top} are the strong favourite, but {draw_pct} in 100 games "
+                f"like this end in a draw.")
     if p >= 0.52:
-        return f"{top} are more likely to win. A draw is still common here."
-    return f"{top} have a small edge, but this one is close and could go any way."
+        return ("more_likely", {"team": top},
+                f"{top} are more likely to win. A draw is still common here.")
+    return ("small_edge", {"team": top},
+            f"{top} have a small edge, but this one is close and could go any way.")
+
+
+def plain_summary(pred: dict) -> str:
+    """English sentence only. Kept for the speech fallback and for tests."""
+    return summarise_outcome(pred)[2]
 
 
 def build_fixture_payload(pred: dict, league_code: str, date, kickoff: str) -> dict:
     top_p = max(pred["home_win"], pred["draw"], pred["away_win"])
     band, stars, colour = confidence_band(top_p)
-    league_name, country = dataio.LEAGUES.get(league_code, (league_code, ""))
+    league_name, country, flag = dataio.LEAGUES.get(league_code, (league_code, "", ""))
     best = pred["likely_scorelines"][0]
+    summary_key, summary_args, summary_text = summarise_outcome(pred)
 
     return {
         "league_code": league_code,
@@ -78,6 +121,8 @@ def build_fixture_payload(pred: dict, league_code: str, date, kickoff: str) -> d
         "country": country,
         "date": str(pd.to_datetime(date).date()),
         "kickoff": str(kickoff) if kickoff else "",
+        # UTC, so the app can render the time in the reader's own zone.
+        "kickoff_utc": kickoff_to_utc(date, kickoff),
         "home_team": pred["home_team"],
         "away_team": pred["away_team"],
         # Percentages, pre-rounded so the UI never does maths.
@@ -105,7 +150,10 @@ def build_fixture_payload(pred: dict, league_code: str, date, kickoff: str) -> d
         "confidence": band,
         "confidence_stars": stars,
         "confidence_colour": colour,
-        "summary": plain_summary(pred),
+        "summary": summary_text,
+        # Structured form, so translation never parses English prose.
+        "summary_key": summary_key,
+        "summary_args": summary_args,
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
 

@@ -33,10 +33,12 @@ SCHEMA_PATH = ROOT / "schema.sql"
 # Only the fields the app actually renders. Everything else stays in the
 # database. Bytes matter: the audience is on metered mobile data.
 LIST_FIELDS = [
-    "league_code", "league", "country", "date", "kickoff",
+    "id",
+    "league_code", "league", "date", "kickoff_utc",
     "home_team", "away_team",
     "home_win_pct", "draw_pct", "away_win_pct",
-    "confidence_stars", "confidence_colour", "summary",
+    "confidence_stars", "confidence_colour",
+    "summary_key", "summary_args", "summary",
 ]
 DETAIL_FIELDS = LIST_FIELDS + [
     "over_2_5_pct", "clean_sheet_home_pct", "clean_sheet_away_pct",
@@ -45,12 +47,13 @@ DETAIL_FIELDS = LIST_FIELDS + [
 ]
 
 FORECAST_FIELDS = [
-    "league", "country", "kickoff",
+    "league", "country", "kickoff", "kickoff_utc",
     "home_win_pct", "draw_pct", "away_win_pct", "over_2_5_pct",
     "clean_sheet_home_pct", "clean_sheet_away_pct",
     "expected_goals_home", "expected_goals_away",
     "likely_score", "likely_scorelines",
-    "confidence", "confidence_stars", "confidence_colour", "summary",
+    "confidence", "confidence_stars", "confidence_colour",
+    "summary", "summary_key", "summary_args",
     "generated_at",
 ]
 
@@ -100,6 +103,8 @@ def upsert_predictions(conn: sqlite3.Connection, rows: list[dict]) -> dict:
         payload = dict(r)
         payload["likely_scorelines"] = json.dumps(r.get("likely_scorelines", []),
                                                   separators=(",", ":"))
+        payload["summary_args"] = json.dumps(r.get("summary_args", {}),
+                                             separators=(",", ":"))
         if existing is None:
             payload["first_published_at"] = now
             cols = ["league_code", "date", "home_team", "away_team",
@@ -182,7 +187,7 @@ def _row_to_dict(row: sqlite3.Row, fields: list[str]) -> dict:
     out = {}
     for f in fields:
         v = row[f]
-        if f == "likely_scorelines" and v:
+        if f in ("likely_scorelines", "summary_args") and v:
             v = json.loads(v)
         out[f] = v
     return out
@@ -232,15 +237,24 @@ def publish_json(conn: sqlite3.Connection, out_dir: Path, limit: int = 100) -> d
         "recent": [dict(r) for r in recent],
     }
 
+    # The league registry travels with meta.json so the app can render a flag
+    # and a name for any league without hard-coding a copy of the list.
+    from .data import CORE_LEAGUES, LEAGUES
+    leagues = [{"code": c, "name": LEAGUES[c][0],
+                "country": LEAGUES[c][1], "flag": LEAGUES[c][2]}
+               for c in CORE_LEAGUES if c in LEAGUES]
+
     published_at = _now()
     _atomic_write(out_dir / "predictions.json",
-                  json.dumps(predictions, separators=(",", ":")))
+                  json.dumps(predictions, separators=(",", ":"), ensure_ascii=False))
     _atomic_write(out_dir / "track-record.json",
-                  json.dumps(track, separators=(",", ":")))
+                  json.dumps(track, separators=(",", ":"), ensure_ascii=False))
     _atomic_write(out_dir / "meta.json",
                   json.dumps({"published_at": published_at,
                               "upcoming": len(predictions),
-                              "settled": n_settled}, separators=(",", ":")))
+                              "settled": n_settled,
+                              "leagues": leagues},
+                             separators=(",", ":"), ensure_ascii=False))
 
     return {"upcoming": len(predictions), "settled": n_settled,
             "leagues": len(by_league), "published_at": published_at}

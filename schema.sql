@@ -16,7 +16,8 @@ create table if not exists predictions (
   league                text    not null,
   country               text,
   date                  text    not null,          -- ISO yyyy-mm-dd
-  kickoff               text,
+  kickoff               text,                       -- UK local, as published
+  kickoff_utc           text,                       -- ISO UTC, what the app uses
   home_team             text    not null,
   away_team             text    not null,
 
@@ -38,7 +39,9 @@ create table if not exists predictions (
   confidence            text,
   confidence_stars      integer,
   confidence_colour     text,
-  summary               text,
+  summary               text,                       -- English, speech fallback
+  summary_key           text,                       -- e.g. "strong_favourite"
+  summary_args          text,                       -- JSON, fills the template
 
   -- When this fixture was FIRST forecast. Never updated.
   first_published_at    text    not null,
@@ -88,6 +91,7 @@ when old.was_correct is not null
     or new.likely_score       is not old.likely_score
     or new.likely_scorelines  is not old.likely_scorelines
     or new.summary            is not old.summary
+    or new.summary_key        is not old.summary_key
     or new.confidence_stars   is not old.confidence_stars
     or new.first_published_at is not old.first_published_at
   )

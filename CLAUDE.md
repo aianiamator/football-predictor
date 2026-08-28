@@ -52,7 +52,9 @@ output/          The static files Cloudflare serves. Generated, gitignored.
 data/forecasts.db   The durable record. Generated, gitignored.
 tests/           Simulated-data verification, leakage audit, store guarantees,
                  payload + product-constraint checks.
-app/             React + Vite + TS + Tailwind PWA. Read-only, no keys.
+tools/dev_seed.py  DEV-ONLY data generator. Never publish its output.
+app/             Vite + TS + Tailwind PWA. Read-only, no keys. React is
+                 aliased to preact/compat: ~20.6 KB gzipped shell.
 ```
 
 Data flows one way:
@@ -157,9 +159,28 @@ python -m tests.test_payload    # payload shape + product-constraint checks
 python -m engine.backtest       # full walk-forward backtest (~3 min, 7 leagues)
 python -m engine.run            # fit, predict fixtures, publish
 python -m engine.settle         # fill in results on past predictions
+
+python -m tools.dev_seed        # DEV data for the app (never publish it)
+npm install --prefix app
+npm run dev --prefix app        # http://localhost:5178
+npm run build --prefix app      # VITE_DATA_URL=<cdn> to point at Cloudflare
 ```
 
 Raw CSVs cache under `data_cache/`, so re-runs do not re-download.
+
+## The app
+
+See `app/README.md`. Three things worth knowing before touching it:
+
+1. **`ThreeWayBar.tsx` is the product.** A reader must be able to take in the
+   whole forecast from its shape before reading a word. Colours are the darker
+   green/slate/blue rather than the brightest, because white bold text on bright
+   green fails contrast on a cheap LCD in daylight.
+2. **Grey means exactly one thing per screen.** The draw segment is a cool
+   slate, so low confidence is a warm stone. Do not let them converge.
+3. **Translation never parses English.** The engine publishes `summary_key` +
+   `summary_args`; the app looks up a template. Adding a language touches only
+   `src/i18n.ts`.
 
 ## Secrets
 

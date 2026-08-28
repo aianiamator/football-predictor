@@ -18,26 +18,27 @@ import requests
 BASE = "https://www.football-data.co.uk/mmz4281"
 FIXTURES_URL = "https://www.football-data.co.uk/fixtures.csv"
 
-# code -> (display name, country)
-LEAGUES: dict[str, tuple[str, str]] = {
-    "E0": ("Premier League", "England"),
-    "E1": ("Championship", "England"),
-    "E2": ("League One", "England"),
-    "E3": ("League Two", "England"),
-    "SP1": ("La Liga", "Spain"),
-    "SP2": ("La Liga 2", "Spain"),
-    "I1": ("Serie A", "Italy"),
-    "I2": ("Serie B", "Italy"),
-    "D1": ("Bundesliga", "Germany"),
-    "D2": ("Bundesliga 2", "Germany"),
-    "F1": ("Ligue 1", "France"),
-    "F2": ("Ligue 2", "France"),
-    "N1": ("Eredivisie", "Netherlands"),
-    "P1": ("Primeira Liga", "Portugal"),
-    "B1": ("Pro League", "Belgium"),
-    "T1": ("Super Lig", "Turkey"),
-    "G1": ("Super League", "Greece"),
-    "SC0": ("Premiership", "Scotland"),
+# code -> (display name, country, flag emoji)
+# The flag is required by the app: every card and filter button carries one.
+LEAGUES: dict[str, tuple[str, str, str]] = {
+    "E0": ("Premier League", "England", "🏴󠁧󠁢󠁥󠁮󠁧󠁿"),
+    "E1": ("Championship", "England", "🏴󠁧󠁢󠁥󠁮󠁧󠁿"),
+    "E2": ("League One", "England", "🏴󠁧󠁢󠁥󠁮󠁧󠁿"),
+    "E3": ("League Two", "England", "🏴󠁧󠁢󠁥󠁮󠁧󠁿"),
+    "SP1": ("La Liga", "Spain", "🇪🇸"),
+    "SP2": ("La Liga 2", "Spain", "🇪🇸"),
+    "I1": ("Serie A", "Italy", "🇮🇹"),
+    "I2": ("Serie B", "Italy", "🇮🇹"),
+    "D1": ("Bundesliga", "Germany", "🇩🇪"),
+    "D2": ("Bundesliga 2", "Germany", "🇩🇪"),
+    "F1": ("Ligue 1", "France", "🇫🇷"),
+    "F2": ("Ligue 2", "France", "🇫🇷"),
+    "N1": ("Eredivisie", "Netherlands", "🇳🇱"),
+    "P1": ("Primeira Liga", "Portugal", "🇵🇹"),
+    "B1": ("Pro League", "Belgium", "🇧🇪"),
+    "T1": ("Super Lig", "Turkey", "🇹🇷"),
+    "G1": ("Super League", "Greece", "🇬🇷"),
+    "SC0": ("Premiership", "Scotland", "🏴󠁧󠁢󠁳󠁣󠁴󠁿"),
 }
 
 # Leagues most watched by a Nigerian / diaspora audience, in priority order.

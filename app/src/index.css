@@ -1,0 +1,49 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --bg: #f8fafc;
+    --surface: #ffffff;
+    --text: #0f172a;
+    --muted: #475569;
+    --line: #e2e8f0;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f172a;
+      --surface: #1e293b;
+      --text: #f1f5f9;
+      --muted: #cbd5e1;
+      --line: #334155;
+    }
+  }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    /* 18px floor: the smallest body text anywhere in the app. */
+    font-size: 18px;
+    line-height: 1.5;
+    margin: 0;
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+  /* Nothing may scroll the page sideways. */
+  #root { overflow-x: hidden; max-width: 100vw; }
+  button { font: inherit; color: inherit; }
+}
+
+@layer utilities {
+  .tap { min-height: 56px; min-width: 56px; }
+  .surface { background: var(--surface); border-color: var(--line); }
+  .muted { color: var(--muted); }
+}
+
+@keyframes shimmer { 0% { opacity: .55 } 50% { opacity: 1 } 100% { opacity: .55 } }
+.skeleton { animation: shimmer 1.4s ease-in-out infinite; background: var(--line); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+}
