@@ -22,3 +22,7 @@ app/dist/
 app/.env
 app/.env.*
 !app/.env.example
+
+# Backtest outputs
+backtest_summary.csv
+backtest_predictions.csv

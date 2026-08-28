@@ -28,19 +28,22 @@ import numpy as np
 from scipy.optimize import minimize
 from scipy.special import gammaln
 
-from .config import HALF_LIFE_DAYS, MAX_GOALS
+from .config import MAX_GOALS, XI_PER_DAY
 
 TAU_FLOOR = 1e-10
 RHO_BOUND = 0.2
 
 
-def decay_weights(match_dates, reference_date, half_life_days: float = HALF_LIFE_DAYS) -> np.ndarray:
-    """Exponential time-decay weights: 1.0 at the reference date, halving
-    every half_life_days going backwards."""
+def decay_weights(match_dates, reference_date, xi: float = XI_PER_DAY) -> np.ndarray:
+    """Exponential time-decay weights: weight = exp(-xi * age_in_days).
+
+    1.0 at the reference date, falling as matches get older. xi=0 disables
+    decay entirely, which is useful for testing against simulated data.
+    """
     age_days = (np.asarray(reference_date, dtype="datetime64[D]")
                 - np.asarray(match_dates, dtype="datetime64[D]")).astype(float)
     age_days = np.maximum(age_days, 0.0)
-    return np.exp(-np.log(2.0) * age_days / half_life_days)
+    return np.exp(-xi * age_days)
 
 
 def _unpack(params: np.ndarray, n: int):
@@ -119,7 +122,7 @@ class DixonColes:
     """Fitted ratings for a single league."""
 
     def __init__(self, teams, attack, defence, home_advantage, rho,
-                 n_matches=0, reference_date=None, converged=True):
+                 n_matches=0, reference_date=None, converged=True, league=None):
         self.teams = list(teams)
         self.index = {t: i for i, t in enumerate(self.teams)}
         self.attack = np.asarray(attack, dtype=float)
@@ -129,30 +132,32 @@ class DixonColes:
         self.n_matches = int(n_matches)
         self.reference_date = reference_date
         self.converged = bool(converged)
+        self.league = league
 
     # -- fitting -----------------------------------------------------------
     @classmethod
-    def fit(cls, df, reference_date=None, half_life_days: float = HALF_LIFE_DAYS,
-            init: "DixonColes | None" = None, maxiter: int = 400) -> "DixonColes":
-        """Fit to a results frame with HomeTeam/AwayTeam/FTHG/FTAG/Date.
+    def fit(cls, df, reference_date=None, xi: float = XI_PER_DAY,
+            init: "DixonColes | None" = None, maxiter: int = 400,
+            league: str | None = None) -> "DixonColes":
+        """Fit to a results frame with home_team/away_team/home_goals/away_goals/date.
 
         reference_date anchors the time decay. It must be the moment of
         prediction, never a date after any match used for training.
         """
         if reference_date is None:
-            reference_date = df["Date"].max()
+            reference_date = df["date"].max()
 
-        teams = sorted(set(df["HomeTeam"]) | set(df["AwayTeam"]))
+        teams = sorted(set(df["home_team"]) | set(df["away_team"]))
         n = len(teams)
         if n < 2 or len(df) < n:
             raise ValueError(f"not enough data to fit: {len(df)} matches, {n} teams")
 
         idx = {t: i for i, t in enumerate(teams)}
-        hi = df["HomeTeam"].map(idx).to_numpy(dtype=int)
-        ai = df["AwayTeam"].map(idx).to_numpy(dtype=int)
-        hg = df["FTHG"].to_numpy(dtype=float)
-        ag = df["FTAG"].to_numpy(dtype=float)
-        w = decay_weights(df["Date"].to_numpy(), np.datetime64(reference_date, "D"), half_life_days)
+        hi = df["home_team"].map(idx).to_numpy(dtype=int)
+        ai = df["away_team"].map(idx).to_numpy(dtype=int)
+        hg = df["home_goals"].to_numpy(dtype=float)
+        ag = df["away_goals"].to_numpy(dtype=float)
+        w = decay_weights(df["date"].to_numpy(), np.datetime64(reference_date, "D"), xi)
 
         x0 = np.zeros(2 * n + 1)
         x0[2 * n - 1] = 0.25   # a mild positive home advantage
@@ -176,7 +181,7 @@ class DixonColes:
         attack, defence, gamma, rho = _unpack(res.x, n)
         return cls(teams, attack, defence, gamma, rho,
                    n_matches=len(df), reference_date=reference_date,
-                   converged=bool(res.success))
+                   converged=bool(res.success), league=league)
 
     # -- prediction --------------------------------------------------------
     def knows(self, team: str) -> bool:
@@ -233,12 +238,23 @@ class DixonColes:
             "home_win": home_win,
             "draw": draw,
             "away_win": away_win,
-            "over25": over25,
-            "under25": 1.0 - over25,
-            "btts": btts,
-            "no_btts": 1.0 - btts,
+            "over_2_5": over25,
+            "under_2_5": 1.0 - over25,
+            "both_teams_score": btts,
+            "no_both_teams_score": 1.0 - btts,
             "exp_home_goals": lam,
             "exp_away_goals": mu,
             "likely_score": {"home": scorelines[0]["home"], "away": scorelines[0]["away"]},
             "likely_scorelines": scorelines,
         }
+
+
+def fit(df, xi: float = XI_PER_DAY, league: str | None = None,
+        reference_date=None, init: "DixonColes | None" = None) -> DixonColes:
+    """Module-level entry point. Fit one league's ratings.
+
+    Raises ValueError when there is not enough data to identify the ratings,
+    which callers are expected to catch and skip.
+    """
+    return DixonColes.fit(df, reference_date=reference_date, xi=xi,
+                          init=init, league=league)

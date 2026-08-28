@@ -49,5 +49,9 @@ SEASONS: list[str] = ["1819", "1920", "2021", "2122", "2223", "2324", "2425", "2
 # --- model defaults -------------------------------------------------------
 # Chosen a priori from the Dixon-Coles literature, NOT tuned against backtest
 # output. Do not adjust these to improve a headline number.
-HALF_LIFE_DAYS = 365.0   # exponential time decay on match weights
+#
+# XI_PER_DAY is the exponential time-decay rate on match weights:
+#     weight = exp(-XI_PER_DAY * age_in_days)
+# 0.0018/day is a half-life of about 385 days - roughly one season.
+XI_PER_DAY = 0.0018
 MAX_GOALS = 10           # score matrix truncation

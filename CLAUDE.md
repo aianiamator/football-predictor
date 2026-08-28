@@ -9,8 +9,8 @@ These override every other instruction in this repo.
 
 1. **Never** use the words *bet, betting, odds, stake, tip, accumulator, banker,
    sure,* or *guaranteed* anywhere in the interface or user-facing copy.
-   (`OddsH/OddsD/OddsA` exist inside `engine/` only, as the bookmaker benchmark
-   for backtesting. They are never surfaced to a user and never published.)
+   (`odds_home/odds_draw/odds_away` exist inside `engine/` only, as the
+   bookmaker benchmark for backtesting. Never surfaced, never published.)
 2. **Never** suggest anyone act on a forecast, financially or otherwise.
 3. **Never** imply certainty. The strongest permitted phrasing is
    *"strong favourite"*.
@@ -70,34 +70,61 @@ gradient (without it the walk-forward backtest is impractically slow).
 
 ### Parameters are chosen a priori, not tuned
 
-`HALF_LIFE_DAYS = 365` comes from the Dixon-Coles literature. It was **not**
-selected by trying values and keeping whichever produced the best backtest
-number. Do not tune these against backtest output — that is exactly how a
-model gets fooled into looking better than it is. `rho` is fitted by MLE.
+`XI_PER_DAY = 0.0018` (weight = `exp(-xi * age_days)`, about a 385-day
+half-life) comes from the Dixon-Coles literature. It was **not** selected by
+trying values and keeping whichever produced the best backtest number. Do not
+tune these against backtest output — that is exactly how a model gets fooled
+into looking better than it is. `rho` is fitted by MLE.
 
 ## Leakage discipline
 
 This is the thing most likely to silently break. At each refit point `t`:
 
-- training data is strictly `Date < t`
+- training data is strictly `date < t`
 - the decay reference date is `t`, so no future match affects any weight
-- predictions cover only `t <= Date < t + REFIT_DAYS`
-- a fixture is skipped unless both teams have `>= MIN_TEAM_MATCHES` history
+- only that matchday's fixtures are predicted
+- a fixture is skipped unless the model already knows both teams
 
 Realistic result accuracy is **low-to-mid 50s**. If a league reports above 60%,
-treat it as a bug and look for leakage before believing it.
+treat it as a bug and look for leakage before believing it. `test_leakage.py`
+fails the build if that ceiling is breached.
 
-`tests/test_leakage.py` guards this two ways: a structural audit of every refit
-window, and a placebo run on randomly reshuffled results — which must collapse
-the edge to roughly zero.
+`tests/test_leakage.py` guards this three ways: a structural audit of every
+refit point, a placebo run on randomly reshuffled scorelines (which must
+collapse the edge to roughly zero), and a hard plausibility ceiling.
+
+## Canonical data schema
+
+One lowercase schema everywhere downstream of `data.py`:
+
+    league  date  home_team  away_team  home_goals  away_goals
+    odds_home  odds_draw  odds_away  season
+
+`odds_*` exist **only** as the bookmaker benchmark inside the backtest. They are
+never published, never written to Supabase, never shown to a user.
+
+## What the numbers say about the product
+
+Measured in the first full run (see `RESULTS.md`):
+
+- **BTTS has no signal** — +0.71pp over its majority-class baseline, with a
+  Brier score *worse* than baseline. The backtest prints its own instruction:
+  do not present this market. This conflicts with the Phase 3 detail screen.
+- **Draws are almost never the argmax** — 106 predicted vs 5,117 actual out of
+  20,231. Never reduce a forecast to a single predicted outcome; the three-way
+  bar is the honest representation.
+- **The top of the confidence scale is overstated** — the 90-100% band lands at
+  81.7%. Reserve "strong favourite" for a band where it actually holds.
+
+Every accuracy figure must be published next to its baseline. The edge is the
+number, never the raw accuracy.
 
 ## Commands
 
 ```bash
 python -m tests.test_model      # verify the model against simulated data
 python -m tests.test_leakage    # structural + placebo leakage audit
-python -m engine.backtest       # full walk-forward backtest (~2 min, 8 leagues)
-python -m engine.backtest E0    # one league
+python -m engine.backtest       # full walk-forward backtest (~3 min, 8 leagues)
 python -m engine.run            # fit, predict fixtures, publish
 python -m engine.settle         # fill in results on past predictions
 ```

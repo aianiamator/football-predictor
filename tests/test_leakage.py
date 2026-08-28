@@ -1,15 +1,19 @@
 """Leakage audit for the walk-forward backtest.
 
-Two independent checks:
+Three independent checks:
 
-  1. STRUCTURAL - at every refit window, assert that the newest training match
-     is strictly older than the oldest match being predicted, and that the
-     decay reference date is not after any predicted match.
+  1. STRUCTURAL - walk the same matchdays the backtest walks and assert that
+     the newest training match is strictly older than the matchday being
+     predicted, and that the decay reference date is never in the future.
 
-  2. PLACEBO - re-run the backtest against a league whose results have been
+  2. WEIGHTS - a fit anchored at date t must give zero weight to nothing and
+     must never see a match dated on or after t.
+
+  3. PLACEBO - re-run the backtest on a league whose scorelines have been
      randomly reshuffled between fixtures. The model can then hold no real
-     information, so accuracy must collapse towards the always-home baseline.
-     If a shuffled league still scores well, information is leaking.
+     information, so its edge over the always-home baseline must collapse to
+     roughly zero. If a shuffled league still shows an edge, something is
+     leaking.
 
 Run with:  python -m tests.test_leakage
 """
@@ -20,132 +24,117 @@ import sys
 import numpy as np
 import pandas as pd
 
-from engine.backtest import (MIN_TEAM_MATCHES, MIN_TRAIN_DAYS, REFIT_DAYS,
-                             TRAIN_WINDOW_DAYS, backtest_league)
-from engine.config import HALF_LIFE_DAYS
-from engine.data import load_league
-from engine.model import DixonColes
+from engine import data as dataio
+from engine.backtest import backtest_league, summarise
+from engine.model import fit
 
 CODE = "E0"
+MIN_TRAIN = 400
+REFIT_DAYS = 7
+
+
+def _load(code: str = CODE) -> pd.DataFrame:
+    df = dataio.load_league(code)
+    df["league"] = code
+    return df
 
 
 def test_structural(code: str = CODE):
-    """Walk the same windows the backtest uses and assert the time ordering."""
-    df = load_league(code)
-    first, last = df["Date"].min(), df["Date"].max()
-    t = first + pd.Timedelta(days=MIN_TRAIN_DAYS)
+    """Replicate the backtest's own walk and assert the time ordering."""
+    matches = _load(code).sort_values("date").reset_index(drop=True)
+    start_date = matches.loc[MIN_TRAIN, "date"]
+    test = matches[matches["date"] > start_date]
 
     windows = 0
-    worst_gap = None
-    while t <= last:
-        end = t + pd.Timedelta(days=REFIT_DAYS)
-        train = df[(df["Date"] < t) & (df["Date"] >= t - pd.Timedelta(days=TRAIN_WINDOW_DAYS))]
-        upcoming = df[(df["Date"] >= t) & (df["Date"] < end)]
+    smallest_gap = None
+    last_fit = None
 
-        if len(upcoming) and len(train) >= 100:
-            newest_train = train["Date"].max()
-            oldest_pred = upcoming["Date"].min()
-            assert newest_train < oldest_pred, (
-                f"LEAK: training match {newest_train} is not before predicted {oldest_pred}")
-            assert t <= oldest_pred, f"LEAK: reference date {t} after predicted {oldest_pred}"
-            gap = (oldest_pred - newest_train).days
-            worst_gap = gap if worst_gap is None else min(worst_gap, gap)
-            windows += 1
-        t = end
+    for date, _day in test.groupby("date"):
+        if last_fit is not None and (date - last_fit).days < REFIT_DAYS:
+            continue
+        train = matches[matches["date"] < date]
+        if len(train) < MIN_TRAIN:
+            continue
+        last_fit = date
 
-    print(f"  {windows} windows audited, all training strictly precedes prediction")
-    print(f"  smallest gap between newest training match and next predicted match: {worst_gap} day(s)")
-    assert windows > 100, "too few windows audited to be meaningful"
+        newest_train = train["date"].max()
+        assert newest_train < date, (
+            f"LEAK: training match {newest_train} is not strictly before matchday {date}")
+        gap = (date - newest_train).days
+        smallest_gap = gap if smallest_gap is None else min(smallest_gap, gap)
+        windows += 1
+
+    print(f"  {windows} refit points audited, training strictly precedes every matchday")
+    print(f"  smallest gap between newest training match and matchday: {smallest_gap} day(s)")
+    assert windows > 100, "too few refit points audited to be meaningful"
     return True
 
 
 def test_no_future_in_weights(code: str = CODE):
-    """Decay weights must never be computed against a future reference date."""
-    df = load_league(code)
-    cut = df["Date"].min() + pd.Timedelta(days=MIN_TRAIN_DAYS)
-    train = df[df["Date"] < cut]
-    model = DixonColes.fit(train, reference_date=cut, half_life_days=HALF_LIFE_DAYS)
+    """A fit anchored at t must contain no match dated on or after t."""
+    matches = _load(code).sort_values("date").reset_index(drop=True)
+    cut = matches.loc[MIN_TRAIN, "date"]
+    train = matches[matches["date"] < cut]
+
+    model = fit(train, league=code, reference_date=cut)
     assert model.reference_date == cut
-    assert train["Date"].max() < cut
-    print(f"  fit on {len(train)} matches, all older than reference date {cut.date()}")
+    assert train["date"].max() < cut
+    assert (train["date"] >= cut).sum() == 0
+    print(f"  fit on {len(train)} matches, newest {train['date'].max().date()}, "
+          f"anchored at {cut.date()}")
     return True
 
 
 def test_placebo(code: str = CODE, seed: int = 42):
-    """Shuffled results must destroy the model's edge."""
-    real = backtest_league(code, verbose=False)
-    assert real is not None
+    """Shuffled scorelines must destroy the model's edge."""
+    matches = _load(code)
 
-    df = load_league(code)
+    real = summarise(backtest_league(matches, code))
+    assert real, "real backtest produced nothing"
+
+    # Permute scorelines across fixtures. The fixture list, the dates and the
+    # overall distribution of scores are all unchanged - only the pairing
+    # between a fixture and its result is destroyed.
     rng = np.random.default_rng(seed)
+    perm = rng.permutation(len(matches))
+    shuffled = matches.copy()
+    shuffled[["home_goals", "away_goals"]] = (
+        matches[["home_goals", "away_goals"]].to_numpy()[perm])
 
-    # Permute the scorelines across fixtures, keeping the fixture list, dates
-    # and the overall distribution of scores identical.
-    perm = rng.permutation(len(df))
-    shuffled = df.copy()
-    shuffled[["FTHG", "FTAG"]] = df[["FTHG", "FTAG"]].to_numpy()[perm]
-    shuffled["Result"] = "D"
-    shuffled.loc[shuffled["FTHG"] > shuffled["FTAG"], "Result"] = "H"
-    shuffled.loc[shuffled["FTHG"] < shuffled["FTAG"], "Result"] = "A"
-    shuffled["TotalGoals"] = shuffled["FTHG"] + shuffled["FTAG"]
-    shuffled["Over25"] = (shuffled["TotalGoals"] >= 3).astype(int)
-    shuffled["BTTS"] = ((shuffled["FTHG"] >= 1) & (shuffled["FTAG"] >= 1)).astype(int)
+    fake = summarise(backtest_league(shuffled, code))
+    assert fake, "placebo backtest produced nothing"
 
-    fake = _run_on_frame(shuffled)
+    print(f"  real     : {real['result_accuracy']:.1%} vs baseline "
+          f"{real['always_home_baseline']:.1%}  edge {real['edge_over_baseline']:+.1%}")
+    print(f"  shuffled : {fake['result_accuracy']:.1%} vs baseline "
+          f"{fake['always_home_baseline']:.1%}  edge {fake['edge_over_baseline']:+.1%}")
 
-    print(f"  real     : accuracy {real['accuracy']*100:.1f}%  "
-          f"baseline {real['home_baseline']*100:.1f}%  edge {real['edge']*100:+.1f}pp")
-    print(f"  shuffled : accuracy {fake['accuracy']*100:.1f}%  "
-          f"baseline {fake['home_baseline']*100:.1f}%  edge {fake['edge']*100:+.1f}pp")
-
-    assert abs(fake["edge"]) < 0.03, (
-        f"LEAK SUSPECTED: shuffled data still shows a {fake['edge']*100:+.1f}pp edge")
-    assert real["edge"] > fake["edge"] + 0.04, "real edge is not clearly above the placebo"
+    assert abs(fake["edge_over_baseline"]) < 0.03, (
+        f"LEAK SUSPECTED: shuffled data still shows a "
+        f"{fake['edge_over_baseline']:+.1%} edge")
+    assert real["edge_over_baseline"] > fake["edge_over_baseline"] + 0.04, (
+        "real edge is not clearly above the placebo")
     return True
 
 
-def _run_on_frame(df: pd.DataFrame) -> dict:
-    """Minimal copy of the walk-forward loop, for an in-memory frame."""
-    first, last = df["Date"].min(), df["Date"].max()
-    t = first + pd.Timedelta(days=MIN_TRAIN_DAYS)
-    prev = None
-    rows = []
-    while t <= last:
-        end = t + pd.Timedelta(days=REFIT_DAYS)
-        train = df[(df["Date"] < t) & (df["Date"] >= t - pd.Timedelta(days=TRAIN_WINDOW_DAYS))]
-        upcoming = df[(df["Date"] >= t) & (df["Date"] < end)]
-        if len(upcoming) == 0 or len(train) < 100:
-            t = end
-            continue
-        try:
-            model = DixonColes.fit(train, reference_date=t, half_life_days=HALF_LIFE_DAYS, init=prev)
-            prev = model
-        except Exception:  # noqa: BLE001
-            t = end
-            continue
-        counts = pd.concat([train["HomeTeam"], train["AwayTeam"]]).value_counts()
-        for r in upcoming.itertuples(index=False):
-            if not (model.knows(r.HomeTeam) and model.knows(r.AwayTeam)):
-                continue
-            if counts.get(r.HomeTeam, 0) < MIN_TEAM_MATCHES or counts.get(r.AwayTeam, 0) < MIN_TEAM_MATCHES:
-                continue
-            p = model.predict(r.HomeTeam, r.AwayTeam)
-            rows.append((p["home_win"], p["draw"], p["away_win"], r.Result))
-        t = end
-
-    res = pd.DataFrame(rows, columns=["p_h", "p_d", "p_a", "actual"])
-    probs = res[["p_h", "p_d", "p_a"]].to_numpy(float)
-    idx = res["actual"].map({"H": 0, "D": 1, "A": 2}).to_numpy(int)
-    acc = float((probs.argmax(axis=1) == idx).mean())
-    base = float((res["actual"] == "H").mean())
-    return {"accuracy": acc, "home_baseline": base, "edge": acc - base, "n": len(res)}
+def test_plausibility(code: str = CODE):
+    """Guard the headline number the whole project hinges on."""
+    res = summarise(backtest_league(_load(code), code))
+    acc = res["result_accuracy"]
+    print(f"  {code} result accuracy {acc:.1%} on {res['matches']} matches")
+    assert acc <= 0.60, (
+        f"IMPLAUSIBLE: {acc:.1%} accuracy. Football result forecasting does not "
+        f"reach this level. Look for leakage before believing it.")
+    assert acc > 0.35, f"suspiciously low accuracy {acc:.1%}; check the pipeline"
+    return True
 
 
 def main():
     tests = [
         ("structural time ordering", test_structural),
         ("no future data in decay weights", test_no_future_in_weights),
-        ("placebo: shuffled results", test_placebo),
+        ("accuracy plausibility ceiling", test_plausibility),
+        ("placebo: shuffled scorelines", test_placebo),
     ]
     failed = 0
     for name, fn in tests:

@@ -61,8 +61,8 @@ def simulate(n_teams=20, n_seasons=6, seed=7):
             day = start + np.timedelta64(season * 300 + (k * 300) // len(pairs), "D")
             rows.append((pd.Timestamp(day), teams[i], teams[j], int(x), int(y)))
 
-    df = pd.DataFrame(rows, columns=["Date", "HomeTeam", "AwayTeam", "FTHG", "FTAG"])
-    df = df.sort_values("Date").reset_index(drop=True)
+    df = pd.DataFrame(rows, columns=["date", "home_team", "away_team", "home_goals", "away_goals"])
+    df = df.sort_values("date").reset_index(drop=True)
     truth = {"teams": teams, "attack": attack, "defence": defence, "gamma": gamma, "rho": rho}
     return df, truth
 
@@ -70,14 +70,14 @@ def simulate(n_teams=20, n_seasons=6, seed=7):
 def test_gradient():
     """Analytic gradient must match finite differences."""
     df, _ = simulate(n_teams=8, n_seasons=2, seed=3)
-    teams = sorted(set(df["HomeTeam"]) | set(df["AwayTeam"]))
+    teams = sorted(set(df["home_team"]) | set(df["away_team"]))
     n = len(teams)
     idx = {t: i for i, t in enumerate(teams)}
-    hi = df["HomeTeam"].map(idx).to_numpy(int)
-    ai = df["AwayTeam"].map(idx).to_numpy(int)
-    hg = df["FTHG"].to_numpy(float)
-    ag = df["FTAG"].to_numpy(float)
-    w = decay_weights(df["Date"].to_numpy(), np.datetime64(df["Date"].max(), "D"))
+    hi = df["home_team"].map(idx).to_numpy(int)
+    ai = df["away_team"].map(idx).to_numpy(int)
+    hg = df["home_goals"].to_numpy(float)
+    ag = df["away_goals"].to_numpy(float)
+    w = decay_weights(df["date"].to_numpy(), np.datetime64(df["date"].max(), "D"))
 
     rng = np.random.default_rng(11)
     x = np.concatenate([rng.normal(0, 0.2, 2 * n - 1), [0.3], [-0.04]])
@@ -107,7 +107,7 @@ def test_recovery():
 
     # Long half-life so the whole simulated history counts roughly equally;
     # this isolates estimation accuracy from the decay.
-    model = DixonColes.fit(df, half_life_days=100000.0)
+    model = DixonColes.fit(df, xi=0.0)
 
     order = [model.index[t] for t in truth["teams"]]
     est_attack = model.attack[order]
@@ -136,7 +136,7 @@ def test_recovery():
 def test_distribution():
     """Score matrix must be a normalised distribution with coherent margins."""
     df, _ = simulate(n_teams=12, n_seasons=3, seed=5)
-    model = DixonColes.fit(df, half_life_days=100000.0)
+    model = DixonColes.fit(df, xi=0.0)
     home, away = model.teams[0], model.teams[1]
 
     m = model.score_matrix(home, away)
@@ -146,8 +146,8 @@ def test_distribution():
     p = model.predict(home, away)
     total = p["home_win"] + p["draw"] + p["away_win"]
     assert abs(total - 1.0) < 1e-9, f"outcome probabilities sum to {total}"
-    assert abs(p["over25"] + p["under25"] - 1.0) < 1e-9
-    assert abs(p["btts"] + p["no_btts"] - 1.0) < 1e-9
+    assert abs(p["over_2_5"] + p["under_2_5"] - 1.0) < 1e-9
+    assert abs(p["both_teams_score"] + p["no_both_teams_score"] - 1.0) < 1e-9
 
     # Expected goals from the truncated matrix should track the fitted rates.
     n = m.shape[0]
@@ -177,7 +177,7 @@ def test_rho_recovery():
     two seasons of data - on ~2000 matches its standard error is large.
     """
     df, truth = simulate(n_teams=20, n_seasons=25, seed=7)
-    model = DixonColes.fit(df, half_life_days=100000.0)
+    model = DixonColes.fit(df, xi=0.0)
     err = abs(model.rho - truth["rho"])
     print(f"  n={len(df)}  rho true {truth['rho']:+.4f}  est {model.rho:+.4f}  err {err:.4f}")
     assert err < 0.03, f"rho not recovered at large n: est {model.rho:+.4f}"
@@ -185,14 +185,24 @@ def test_rho_recovery():
 
 
 def test_decay():
-    """Weights must halve over one half-life and never exceed 1."""
+    """weight = exp(-xi * age_days); xi=0 must disable decay entirely."""
     ref = np.datetime64("2024-01-01")
     dates = np.array(["2024-01-01", "2023-01-02", "2022-01-02"], dtype="datetime64[D]")
-    w = decay_weights(dates, ref, half_life_days=365.0)
-    print(f"  weights: {np.round(w, 4)}")
+
+    # xi chosen so one year is exactly one half-life.
+    w = decay_weights(dates, ref, xi=np.log(2.0) / 365.0)
+    print(f"  half-life xi -> {np.round(w, 4)}")
     assert abs(w[0] - 1.0) < 1e-9
     assert abs(w[1] - 0.5) < 0.01
     assert abs(w[2] - 0.25) < 0.01
+
+    # The production default.
+    w2 = decay_weights(dates, ref, xi=0.0018)
+    print(f"  production xi=0.0018 -> {np.round(w2, 4)} (1yr weight {w2[1]:.3f})")
+    assert w2[0] > w2[1] > w2[2]
+
+    w3 = decay_weights(dates, ref, xi=0.0)
+    assert np.allclose(w3, 1.0), "xi=0 must disable decay"
     return True
 
 

@@ -4,10 +4,18 @@ No API key required. Raw CSVs are cached under data/raw/ so repeated runs and
 backtests do not re-download. Completed seasons are cached permanently; the
 current season is refreshed on demand.
 
-Two column eras have to be handled:
-  * 2019/20 onward  -> AvgH / AvgD / AvgA   (market average odds)
+Two upstream column eras have to be handled:
+  * 2019/20 onward  -> AvgH / AvgD / AvgA   (market average closing odds)
   * up to 2018/19   -> BbAvH / BbAvD / BbAvA
-B365H/D/A is used as a fallback when neither aggregate is present.
+B365H/D/A is the fallback when neither aggregate is present.
+
+Everything downstream uses one canonical lowercase schema:
+
+    league  date  home_team  away_team  home_goals  away_goals
+    odds_home  odds_draw  odds_away  season
+
+The odds columns exist ONLY as the bookmaker benchmark inside the backtest.
+They are never published and never surfaced to a user.
 """
 from __future__ import annotations
 
@@ -18,7 +26,8 @@ from pathlib import Path
 import pandas as pd
 import requests
 
-from .config import SEASONS
+from .config import ACTIVE, BY_CODE, SEASONS
+from .config import LEAGUES as _LEAGUE_OBJECTS
 
 log = logging.getLogger(__name__)
 
@@ -28,10 +37,25 @@ FIXTURES_URL = "https://www.football-data.co.uk/fixtures.csv"
 ROOT = Path(__file__).resolve().parent.parent
 RAW_DIR = ROOT / "data" / "raw"
 
+# code -> (display name, flag emoji)
+LEAGUES: dict[str, tuple[str, str]] = {lg.code: (lg.name, lg.flag) for lg in _LEAGUE_OBJECTS}
+
+# The default set that gets fitted, backtested and published.
+CORE_LEAGUES: list[str] = [lg.code for lg in ACTIVE]
+
 # Preference order for the three-way market odds.
 ODDS_SETS = [("AvgH", "AvgD", "AvgA"), ("BbAvH", "BbAvD", "BbAvA"), ("B365H", "B365D", "B365A")]
 
-CORE = ["Div", "Date", "HomeTeam", "AwayTeam", "FTHG", "FTAG"]
+_SOURCE_CORE = ["Div", "Date", "HomeTeam", "AwayTeam", "FTHG", "FTAG"]
+
+_RENAME = {
+    "Div": "league",
+    "Date": "date",
+    "HomeTeam": "home_team",
+    "AwayTeam": "away_team",
+    "FTHG": "home_goals",
+    "FTAG": "away_goals",
+}
 
 
 def _parse_dates(s: pd.Series) -> pd.Series:
@@ -70,30 +94,45 @@ def download_season(code: str, season: str, refresh: bool = False) -> pd.DataFra
         return None
 
     df.columns = [c.strip() for c in df.columns]
-    if not set(CORE).issubset(df.columns):
+    if not set(_SOURCE_CORE).issubset(df.columns):
         log.warning("%s %s: missing core columns", code, season)
         return None
 
-    out = df[CORE].copy()
-    out["Date"] = _parse_dates(out["Date"])
+    out = df[_SOURCE_CORE].rename(columns=_RENAME).copy()
+    out["date"] = _parse_dates(out["date"])
 
-    # Attach market odds from whichever era's columns are present.
     for h, d, a in ODDS_SETS:
         if {h, d, a}.issubset(df.columns):
-            out["OddsH"] = pd.to_numeric(df[h], errors="coerce")
-            out["OddsD"] = pd.to_numeric(df[d], errors="coerce")
-            out["OddsA"] = pd.to_numeric(df[a], errors="coerce")
+            out["odds_home"] = pd.to_numeric(df[h], errors="coerce")
+            out["odds_draw"] = pd.to_numeric(df[d], errors="coerce")
+            out["odds_away"] = pd.to_numeric(df[a], errors="coerce")
             break
     else:
-        out["OddsH"] = out["OddsD"] = out["OddsA"] = pd.NA
+        out["odds_home"] = out["odds_draw"] = out["odds_away"] = float("nan")
 
-    out["Season"] = season
+    out["season"] = season
     return out
 
 
-def load_league(code: str, seasons: list[str] | None = None, refresh_current: bool = True) -> pd.DataFrame:
+def clean(df: pd.DataFrame) -> pd.DataFrame:
+    """Drop unplayed/malformed rows and coerce types."""
+    out = df.copy()
+    out["home_goals"] = pd.to_numeric(out["home_goals"], errors="coerce")
+    out["away_goals"] = pd.to_numeric(out["away_goals"], errors="coerce")
+    out = out.dropna(subset=["date", "home_team", "away_team", "home_goals", "away_goals"])
+    out["home_goals"] = out["home_goals"].astype(int)
+    out["away_goals"] = out["away_goals"].astype(int)
+    out["home_team"] = out["home_team"].astype(str).str.strip()
+    out["away_team"] = out["away_team"].astype(str).str.strip()
+    out = out[out["home_team"] != ""]
+    out = out[out["away_team"] != ""]
+    out = out[out["home_team"] != out["away_team"]]
+    return out.sort_values("date").reset_index(drop=True)
+
+
+def load_league(code: str, n_seasons: int = len(SEASONS), refresh_current: bool = True) -> pd.DataFrame:
     """All available completed matches for one league, oldest first."""
-    seasons = seasons or SEASONS
+    seasons = SEASONS[-n_seasons:] if n_seasons else SEASONS
     frames = []
     for i, season in enumerate(seasons):
         is_last = i == len(seasons) - 1
@@ -101,44 +140,35 @@ def load_league(code: str, seasons: list[str] | None = None, refresh_current: bo
         if df is not None and len(df):
             frames.append(df)
     if not frames:
-        return pd.DataFrame(columns=[*CORE, "OddsH", "OddsD", "OddsA", "Season"])
-
-    out = pd.concat(frames, ignore_index=True)
-    return clean(out)
-
-
-def clean(df: pd.DataFrame) -> pd.DataFrame:
-    """Drop unplayed/malformed rows and coerce types."""
-    out = df.copy()
-    out["FTHG"] = pd.to_numeric(out["FTHG"], errors="coerce")
-    out["FTAG"] = pd.to_numeric(out["FTAG"], errors="coerce")
-    out = out.dropna(subset=["Date", "HomeTeam", "AwayTeam", "FTHG", "FTAG"])
-    out["FTHG"] = out["FTHG"].astype(int)
-    out["FTAG"] = out["FTAG"].astype(int)
-    out["HomeTeam"] = out["HomeTeam"].astype(str).str.strip()
-    out["AwayTeam"] = out["AwayTeam"].astype(str).str.strip()
-    out = out[out["HomeTeam"] != ""]
-    out = out[out["AwayTeam"] != ""]
-    out = out[out["HomeTeam"] != out["AwayTeam"]]
-
-    # Derived outcome columns used by the model and the backtest.
-    out["Result"] = "D"
-    out.loc[out["FTHG"] > out["FTAG"], "Result"] = "H"
-    out.loc[out["FTHG"] < out["FTAG"], "Result"] = "A"
-    out["TotalGoals"] = out["FTHG"] + out["FTAG"]
-    out["Over25"] = (out["TotalGoals"] >= 3).astype(int)
-    out["BTTS"] = ((out["FTHG"] >= 1) & (out["FTAG"] >= 1)).astype(int)
-
-    return out.sort_values("Date").reset_index(drop=True)
+        return pd.DataFrame(columns=list(_RENAME.values())
+                            + ["odds_home", "odds_draw", "odds_away", "season"])
+    return clean(pd.concat(frames, ignore_index=True))
 
 
-def implied_probabilities(odds_h, odds_d, odds_a):
-    """Convert decimal odds to probabilities, normalising away the overround.
+def load_many(codes: list[str] | None = None, n_seasons: int = len(SEASONS),
+              refresh_current: bool = True) -> pd.DataFrame:
+    """Load several leagues into one frame."""
+    codes = codes or CORE_LEAGUES
+    frames = []
+    for code in codes:
+        df = load_league(code, n_seasons=n_seasons, refresh_current=refresh_current)
+        if len(df):
+            # Trust our own code, not the upstream Div field.
+            df["league"] = code
+            frames.append(df)
+    if not frames:
+        return pd.DataFrame(columns=list(_RENAME.values())
+                            + ["odds_home", "odds_draw", "odds_away", "season"])
+    return pd.concat(frames, ignore_index=True).sort_values("date").reset_index(drop=True)
+
+
+def implied_probabilities(odds_home, odds_draw, odds_away):
+    """Decimal odds -> probabilities, with the overround normalised away.
 
     Returns (None, None, None) when any leg is missing or invalid.
     """
     try:
-        h, d, a = float(odds_h), float(odds_d), float(odds_a)
+        h, d, a = float(odds_home), float(odds_draw), float(odds_away)
     except (TypeError, ValueError):
         return (None, None, None)
     if not all(x > 1.0 for x in (h, d, a)):
@@ -152,22 +182,29 @@ def implied_probabilities(odds_h, odds_d, odds_a):
 
 def load_fixtures() -> pd.DataFrame:
     """Upcoming fixtures published by football-data.co.uk."""
+    cols = ["league", "date", "time", "home_team", "away_team"]
     try:
         resp = requests.get(FIXTURES_URL, timeout=60)
         resp.raise_for_status()
     except requests.RequestException as exc:
         log.warning("fixtures download failed (%s)", exc)
-        return pd.DataFrame(columns=["Div", "Date", "Time", "HomeTeam", "AwayTeam"])
+        return pd.DataFrame(columns=cols)
 
     df = pd.read_csv(io.BytesIO(resp.content), encoding="utf-8-sig", on_bad_lines="skip")
     df.columns = [c.strip() for c in df.columns]
     if "Div" not in df.columns:
-        return pd.DataFrame(columns=["Div", "Date", "Time", "HomeTeam", "AwayTeam"])
+        return pd.DataFrame(columns=cols)
 
-    keep = [c for c in ["Div", "Date", "Time", "HomeTeam", "AwayTeam"] if c in df.columns]
-    out = df[keep].copy()
-    out["Date"] = _parse_dates(out["Date"])
-    if "Time" not in out.columns:
-        out["Time"] = ""
-    out["Time"] = out["Time"].fillna("").astype(str)
-    return out.dropna(subset=["Date", "HomeTeam", "AwayTeam"]).reset_index(drop=True)
+    rename = {"Div": "league", "Date": "date", "Time": "time",
+              "HomeTeam": "home_team", "AwayTeam": "away_team"}
+    keep = [c for c in rename if c in df.columns]
+    out = df[keep].rename(columns=rename).copy()
+    out["date"] = _parse_dates(out["date"])
+    if "time" not in out.columns:
+        out["time"] = ""
+    out["time"] = out["time"].fillna("").astype(str)
+    return out.dropna(subset=["date", "home_team", "away_team"]).reset_index(drop=True)
+
+
+def league_name(code: str) -> str:
+    return BY_CODE[code].name if code in BY_CODE else code
