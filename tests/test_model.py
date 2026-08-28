@@ -109,9 +109,8 @@ def test_recovery():
     # this isolates estimation accuracy from the decay.
     model = DixonColes.fit(df, xi=0.0)
 
-    order = [model.index[t] for t in truth["teams"]]
-    est_attack = model.attack[order]
-    est_defence = model.defence[order]
+    est_attack = np.array([model.attack[t] for t in truth["teams"]])
+    est_defence = np.array([model.defence[t] for t in truth["teams"]])
     est_defence = est_defence - est_defence.mean() + truth["defence"].mean()
 
     attack_corr = float(np.corrcoef(est_attack, truth["attack"])[0, 1])

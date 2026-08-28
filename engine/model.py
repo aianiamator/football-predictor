@@ -125,8 +125,9 @@ class DixonColes:
                  n_matches=0, reference_date=None, converged=True, league=None):
         self.teams = list(teams)
         self.index = {t: i for i, t in enumerate(self.teams)}
-        self.attack = np.asarray(attack, dtype=float)
-        self.defence = np.asarray(defence, dtype=float)
+        # Keyed by team name, so callers can do model.attack["Arsenal"].
+        self.attack = {t: float(v) for t, v in zip(self.teams, np.asarray(attack, dtype=float))}
+        self.defence = {t: float(v) for t, v in zip(self.teams, np.asarray(defence, dtype=float))}
         self.home_advantage = float(home_advantage)
         self.rho = float(rho)
         self.n_matches = int(n_matches)
@@ -163,9 +164,9 @@ class DixonColes:
         x0[2 * n - 1] = 0.25   # a mild positive home advantage
         x0[2 * n] = -0.03      # rho is typically slightly negative
         if init is not None:
-            prev_attack = np.array([init.attack[init.index[t]] if t in init.index else 0.0 for t in teams])
+            prev_attack = np.array([init.attack.get(t, 0.0) for t in teams])
             prev_attack -= prev_attack.mean()
-            prev_defence = np.array([init.defence[init.index[t]] if t in init.index else 0.0 for t in teams])
+            prev_defence = np.array([init.defence.get(t, 0.0) for t in teams])
             x0[: n - 1] = prev_attack[: n - 1]
             x0[n - 1 : 2 * n - 1] = prev_defence
             x0[2 * n - 1] = init.home_advantage
@@ -188,9 +189,8 @@ class DixonColes:
         return team in self.index
 
     def rates(self, home: str, away: str) -> tuple[float, float]:
-        h, a = self.index[home], self.index[away]
-        lam = float(np.exp(self.attack[h] + self.defence[a] + self.home_advantage))
-        mu = float(np.exp(self.attack[a] + self.defence[h]))
+        lam = float(np.exp(self.attack[home] + self.defence[away] + self.home_advantage))
+        mu = float(np.exp(self.attack[away] + self.defence[home]))
         return lam, mu
 
     def score_matrix(self, home: str, away: str, max_goals: int = MAX_GOALS) -> np.ndarray:
@@ -230,21 +230,33 @@ class DixonColes:
         flat_idx = np.argsort(m.reshape(-1))[::-1][:5]
         probs = m.reshape(-1)
         scorelines = [
-            {"home": int(i // n), "away": int(i % n), "prob": float(probs[i])}
+            {"home_goals": int(i // n), "away_goals": int(i % n),
+             "prob": round(float(probs[i]), 4)}
             for i in flat_idx
         ]
 
+        # A clean sheet for the home side means the AWAY team failed to score.
+        clean_sheet_home = float(m[:, 0].sum())
+        clean_sheet_away = float(m[0, :].sum())
+
         return {
+            "home_team": home,
+            "away_team": away,
             "home_win": home_win,
             "draw": draw,
             "away_win": away_win,
             "over_2_5": over25,
             "under_2_5": 1.0 - over25,
+            # Kept for the backtest's benchmark only. NOT published: its pooled
+            # edge over baseline was +0.71pp with a Brier worse than baseline.
             "both_teams_score": btts,
             "no_both_teams_score": 1.0 - btts,
-            "exp_home_goals": lam,
-            "exp_away_goals": mu,
-            "likely_score": {"home": scorelines[0]["home"], "away": scorelines[0]["away"]},
+            "clean_sheet_home": clean_sheet_home,
+            "clean_sheet_away": clean_sheet_away,
+            "expected_goals_home": round(lam, 2),
+            "expected_goals_away": round(mu, 2),
+            "likely_score": {"home_goals": scorelines[0]["home_goals"],
+                             "away_goals": scorelines[0]["away_goals"]},
             "likely_scorelines": scorelines,
         }
 
