@@ -1,4 +1,57 @@
-# Deploying to the Hetzner box
+# Deployment
+
+## Current state (2026-08-28)
+
+**Live at https://football-predictor.aianimatorhub.workers.dev**
+
+Running on GitHub Actions + Cloudflare Workers. No server to maintain.
+
+    football-data.co.uk -> GitHub Actions (cron) -> commits to repo
+                        -> Cloudflare Workers static assets -> app
+
+- `.github/workflows/forecasts.yml` runs the engine: forecasts at 05:30 UTC
+  daily, results every 6 hours. It runs the leakage audit BEFORE publishing, so
+  a run that would leak future information fails instead of shipping.
+- Cloudflare redeploys automatically on every push to `main`.
+- `app/wrangler.toml` declares the assets directory. It is a **Worker**, not a
+  Pages project - `pages_build_output_dir` is silently ignored here, which once
+  caused the source `index.html` to be published instead of the built one.
+- First visit costs ~23 KB. Repeat visits ~5 KB.
+
+### The custom domain, deferred deliberately
+
+`forecasts.future-intelligence.net` is NOT connected. Cloudflare Workers custom
+domains require the zone to be hosted on Cloudflare, and `future-intelligence.net`
+has its DNS at Name.com pointing at a live Replit site with a Stripe paywall.
+
+**Decision: stay on the workers.dev address rather than migrate a live revenue
+site's nameservers to add a football subdomain.** The app works; the URL is
+cosmetic.
+
+When it is worth doing, the low-risk route is a **Pages project plus a CNAME**,
+which leaves DNS at Name.com untouched:
+
+1. Change `app/wrangler.toml` from `[assets] directory` to
+   `pages_build_output_dir = "./dist"` (Pages format, not Workers format).
+2. Create a Pages project from the same repo: root directory `app`,
+   build command `npm ci && npm run build:site`.
+3. Pages -> Custom domains -> add `forecasts.future-intelligence.net`; it gives
+   a CNAME target.
+4. At Name.com add one CNAME: host `forecasts`, value = that target.
+5. Delete the old Worker.
+
+DNS snapshot taken 2026-08-28, which must still hold afterwards:
+
+| Record | Value |
+|---|---|
+| A | `34.111.179.208` (Replit, the FISL site) |
+| TXT | `replit-verify=720023b5-e805-4a64-8b04-7d93e9666ff6` |
+| MX | none - no email on this domain, so nothing to break |
+| NS | `ns1cny` / `ns2ckr` / `ns3jkl` / `ns4hny.name.com` |
+
+---
+
+# Alternative: deploying to a Hetzner box
 
 The whole system is one directory, one SQLite file, and three JSON files served
 as static assets. There is no application server, no database server, no API,
