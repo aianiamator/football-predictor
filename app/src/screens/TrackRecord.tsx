@@ -25,7 +25,7 @@ export default function TrackRecord({
 
   if (loading && !data) return <Skeleton count={3} />
 
-  const settled = data?.overall.matches_settled ?? 0
+  const settled = data?.overall?.matches_settled ?? 0
 
   return (
     <div className="space-y-4">
@@ -47,13 +47,13 @@ export default function TrackRecord({
             </div>
             <div className="flex items-end gap-3">
               <span className="font-bold tabular-nums" style={{ fontSize: 48, lineHeight: 1.1 }}>
-                {data?.overall.accuracy_pct ?? 0}%
+                {data?.overall?.accuracy_pct ?? 0}%
               </span>
               <span className="muted pb-2" style={{ fontSize: 17 }}>
                 {settled} {d.settled}
               </span>
             </div>
-            <Bar pct={data?.overall.accuracy_pct ?? 0} />
+            <Bar pct={data?.overall?.accuracy_pct ?? 0} />
           </section>
 
           {/* Per league */}

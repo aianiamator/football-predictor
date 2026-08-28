@@ -1,12 +1,17 @@
-# Cloudflare Pages configuration.
+# Cloudflare Workers configuration.
 #
-# The dashboard's "build output directory" field has moved around between
-# versions of the Cloudflare UI. Declaring it here means the setting lives with
-# the code and cannot be lost or mistyped in a form.
+# This project is deployed as a Worker serving static assets, not as a classic
+# Pages project - so the key is [assets], NOT pages_build_output_dir, which
+# Workers silently ignores. Getting that wrong deploys the SOURCE index.html
+# instead of the built one, and every asset 404s while the page still loads.
 #
-# Paths are relative to the project root directory set in the dashboard, which
-# is "app".
+# Paths are relative to the root directory set in the dashboard, which is "app".
 
 name = "football-predictor"
 compatibility_date = "2026-08-28"
-pages_build_output_dir = "./dist"
+
+[assets]
+directory = "./dist"
+# The app has no client-side routes - navigation never changes the path - so an
+# unknown path should be an honest 404 rather than silently serving the shell.
+not_found_handling = "none"

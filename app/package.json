@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "prebuild": "node scripts/check-no-devdata.mjs",
-    "build:site": "npm run build && mkdir -p dist/data && for f in predictions.json track-record.json meta.json; do cp \"../output/$f\" \"dist/data/$f\" 2>/dev/null || echo \"[]\" > \"dist/data/$f\"; done"
+    "build:site": "npm run build && node scripts/copy-data.mjs"
   },
   "dependencies": {
     "preact": "^10.29.8",
