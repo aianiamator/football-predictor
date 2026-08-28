@@ -1,0 +1,195 @@
+"""Store guarantees.
+
+The reason this project keeps a database at all, rather than only writing JSON
+files, is that the public track record has to be trustworthy. That requires one
+hard property: once a match has been settled, its forecast can never change.
+
+These tests prove it holds, including against a direct SQL update that bypasses
+the application code.
+
+Run with:  python -m tests.test_store
+"""
+from __future__ import annotations
+
+import json
+import sqlite3
+import sys
+import tempfile
+from pathlib import Path
+
+from engine import store
+
+
+def _row(home="Arsenal", away="Chelsea", date="2026-09-01", h=60, d=25, a=15):
+    return {
+        "league_code": "E0", "league": "Premier League", "country": "England",
+        "date": date, "kickoff": "20:00", "home_team": home, "away_team": away,
+        "home_win_pct": h, "draw_pct": d, "away_win_pct": a,
+        "over_2_5_pct": None,
+        "clean_sheet_home_pct": 40, "clean_sheet_away_pct": 20,
+        "expected_goals_home": 1.8, "expected_goals_away": 0.9,
+        "likely_score": "2-0",
+        "likely_scorelines": [{"home_goals": 2, "away_goals": 0, "prob": 0.12}],
+        "confidence": "moderate", "confidence_stars": 2, "confidence_colour": "#ca8a04",
+        "summary": "Arsenal are more likely to win. A draw is still common here.",
+        "generated_at": "2026-08-28T00:00:00+00:00",
+    }
+
+
+def _fresh():
+    tmp = Path(tempfile.mkdtemp()) / "t.db"
+    return store.connect(tmp), tmp
+
+
+def test_insert_then_refresh():
+    """An unsettled forecast may be refreshed by a later run."""
+    conn, _ = _fresh()
+    c1 = store.upsert_predictions(conn, [_row()])
+    assert c1 == {"inserted": 1, "refreshed": 0, "frozen": 0}, c1
+
+    c2 = store.upsert_predictions(conn, [_row(h=70, d=20, a=10)])
+    assert c2 == {"inserted": 0, "refreshed": 1, "frozen": 0}, c2
+
+    got = conn.execute("select home_win_pct, first_published_at, generated_at "
+                       "from predictions").fetchone()
+    assert got["home_win_pct"] == 70, "unsettled forecast should update"
+    print(f"  refreshed 60 -> {got['home_win_pct']}; first_published_at preserved")
+    conn.close()
+    return True
+
+
+def test_settled_forecast_is_frozen():
+    """Once settled, a re-run must NOT rewrite the forecast."""
+    conn, _ = _fresh()
+    store.upsert_predictions(conn, [_row(h=60, d=25, a=15)])
+    assert store.settle(conn, "E0", "2026-09-01", "Arsenal", "Chelsea", 2, 0)
+
+    before = conn.execute("select home_win_pct, summary from predictions").fetchone()
+    counts = store.upsert_predictions(conn, [_row(h=99, d=1, a=0)])
+    after = conn.execute("select home_win_pct, summary from predictions").fetchone()
+
+    assert counts["frozen"] == 1, counts
+    assert after["home_win_pct"] == before["home_win_pct"] == 60, \
+        "settled forecast was rewritten"
+    print(f"  re-run with 99% ignored; stored forecast still {after['home_win_pct']}%")
+    conn.close()
+    return True
+
+
+def test_trigger_blocks_raw_sql():
+    """The guarantee must survive someone bypassing the application code."""
+    conn, _ = _fresh()
+    store.upsert_predictions(conn, [_row()])
+    store.settle(conn, "E0", "2026-09-01", "Arsenal", "Chelsea", 2, 0)
+
+    try:
+        conn.execute("update predictions set home_win_pct = 99")
+        conn.commit()
+    except sqlite3.IntegrityError as exc:
+        print(f"  raw UPDATE refused: {exc}")
+        conn.close()
+        return True
+    raise AssertionError("raw SQL rewrote a settled forecast; trigger did not fire")
+
+
+def test_settle_only_once_and_scores_correctly():
+    conn, _ = _fresh()
+    store.upsert_predictions(conn, [
+        _row(home="Arsenal", away="Chelsea", h=60, d=25, a=15),
+        _row(home="Leeds", away="Everton", date="2026-09-02", h=20, d=25, a=55),
+    ])
+    # Home forecast, home win -> correct.
+    assert store.settle(conn, "E0", "2026-09-01", "Arsenal", "Chelsea", 2, 0)
+    # Away forecast, home win -> incorrect.
+    assert store.settle(conn, "E0", "2026-09-02", "Leeds", "Everton", 3, 1)
+    # Settling twice must be refused.
+    assert not store.settle(conn, "E0", "2026-09-01", "Arsenal", "Chelsea", 5, 5)
+
+    rows = {r["home_team"]: r["was_correct"] for r in
+            conn.execute("select home_team, was_correct from predictions")}
+    assert rows["Arsenal"] == 1, rows
+    assert rows["Leeds"] == 0, rows
+    print(f"  scored correctly: {rows}; double-settle refused")
+    conn.close()
+    return True
+
+
+def test_publish_shape_and_atomicity():
+    conn, _ = _fresh()
+    future = "2099-01-01"
+    store.upsert_predictions(conn, [_row(date=future)])
+    store.upsert_predictions(conn, [_row(home="Leeds", away="Everton", date="2026-09-02")])
+    store.settle(conn, "E0", "2026-09-02", "Leeds", "Everton", 1, 0)
+
+    out = Path(tempfile.mkdtemp())
+    res = store.publish_json(conn, out)
+
+    preds = json.loads((out / "predictions.json").read_text(encoding="utf-8"))
+    track = json.loads((out / "track-record.json").read_text(encoding="utf-8"))
+    meta = json.loads((out / "meta.json").read_text(encoding="utf-8"))
+
+    assert len(preds) == 1, "only unsettled future fixtures belong in predictions.json"
+    assert preds[0]["date"] == future
+    assert isinstance(preds[0]["likely_scorelines"], list), "scorelines must be real JSON"
+    assert "both_teams_score" not in preds[0]
+
+    assert track["overall"]["matches_settled"] == 1
+    assert len(track["recent"]) == 1
+    assert track["by_league"][0]["league"] == "Premier League"
+    assert meta["upcoming"] == 1 and meta["settled"] == 1
+
+    leftover = list(out.glob("*.tmp"))
+    assert not leftover, f"temp files left behind: {leftover}"
+    print(f"  published {res}; no .tmp files left")
+    conn.close()
+    return True
+
+
+def test_misses_are_published_too():
+    """The track record is never filtered. Misses must appear alongside hits."""
+    conn, _ = _fresh()
+    store.upsert_predictions(conn, [
+        _row(home="A", away="B", date="2026-09-01", h=60, d=25, a=15),
+        _row(home="C", away="D", date="2026-09-02", h=60, d=25, a=15),
+    ])
+    store.settle(conn, "E0", "2026-09-01", "A", "B", 3, 0)   # hit
+    store.settle(conn, "E0", "2026-09-02", "C", "D", 0, 3)   # miss
+
+    out = Path(tempfile.mkdtemp())
+    store.publish_json(conn, out)
+    track = json.loads((out / "track-record.json").read_text(encoding="utf-8"))
+    flags = sorted(r["was_correct"] for r in track["recent"])
+    assert flags == [0, 1], f"expected one hit and one miss, got {flags}"
+    assert track["overall"]["accuracy_pct"] == 50.0
+    print(f"  both a hit and a miss published; accuracy {track['overall']['accuracy_pct']}%")
+    conn.close()
+    return True
+
+
+def main():
+    tests = [
+        ("insert then refresh while unsettled", test_insert_then_refresh),
+        ("settled forecast is frozen against re-runs", test_settled_forecast_is_frozen),
+        ("trigger blocks raw SQL rewrite", test_trigger_blocks_raw_sql),
+        ("settle scores correctly and only once", test_settle_only_once_and_scores_correctly),
+        ("published JSON shape and atomicity", test_publish_shape_and_atomicity),
+        ("misses are published, not filtered", test_misses_are_published_too),
+    ]
+    failed = 0
+    for name, fn in tests:
+        print(f"\n[ {name} ]")
+        try:
+            fn()
+            print("  PASS")
+        except AssertionError as exc:
+            print(f"  FAIL: {exc}")
+            failed += 1
+        except Exception as exc:  # noqa: BLE001
+            print(f"  ERROR: {type(exc).__name__}: {exc}")
+            failed += 1
+    print(f"\n{'ALL PASSED' if failed == 0 else str(failed) + ' FAILED'}")
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -11,13 +11,13 @@ Run:  python -m engine.run
 from __future__ import annotations
 
 import json
-import os
 from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
 
 from . import data as dataio
+from . import store
 from .model import fit
 
 OUT = Path(__file__).resolve().parent.parent / "output"
@@ -172,53 +172,27 @@ def run(leagues: list[str] | None = None, n_seasons: int = 8) -> list[dict]:
             made += 1
         print(f"  {name}: {len(model.teams)} teams rated, {made} fixtures predicted")
 
-    (OUT / "predictions.json").write_text(json.dumps(payloads, indent=2))
-    (OUT / "ratings.json").write_text(json.dumps(ratings, indent=2))
-    print(f"\nWrote {len(payloads)} predictions to {OUT / 'predictions.json'}")
+    # The durable store first, then the static files derived from it.
+    conn = store.connect()
+    try:
+        counts = store.upsert_predictions(conn, payloads)
+        n_ratings = store.upsert_ratings(conn, ratings)
+        print(f"\nStore: {counts['inserted']} new, {counts['refreshed']} refreshed, "
+              f"{counts['frozen']} left frozen (already settled), "
+              f"{n_ratings} team ratings")
 
-    if os.getenv("SUPABASE_URL") and os.getenv("SUPABASE_SERVICE_KEY"):
-        push_to_supabase(payloads, ratings)
-    else:
-        print("Set SUPABASE_URL and SUPABASE_SERVICE_KEY to publish to the app.")
+        published = store.publish_json(conn, OUT)
+        print(f"Published: {published['upcoming']} upcoming, "
+              f"{published['settled']} settled, {published['leagues']} leagues in record")
+        for name in ("predictions.json", "track-record.json", "meta.json"):
+            size = (OUT / name).stat().st_size
+            print(f"  {name:<20}{size / 1024:7.1f} KB")
+        print(f"\nStore:  {store.DB_PATH}")
+        print(f"Static: {OUT}   <- this directory is what Cloudflare serves")
+    finally:
+        conn.close()
 
     return payloads
-
-
-def push_to_supabase(predictions: list[dict], ratings: list[dict]) -> None:
-    """Upsert into Supabase. Service key is server-side only — never in the app."""
-    import requests
-
-    url = os.environ["SUPABASE_URL"].rstrip("/")
-    key = os.environ["SUPABASE_SERVICE_KEY"]
-    headers = {
-        "apikey": key,
-        "Authorization": f"Bearer {key}",
-        "Content-Type": "application/json",
-        "Prefer": "resolution=merge-duplicates",
-    }
-
-    # PostgREST defaults an upsert's conflict target to the PRIMARY KEY. Here
-    # that is a bigserial id which is never sent, so the merge could never
-    # match and every re-run would fail on the unique constraint. Name the
-    # real constraint columns explicitly.
-    conflict = {
-        "predictions": "league_code,date,home_team,away_team",
-        "team_ratings": "league_code,team",
-    }
-
-    for table, rows in [("predictions", predictions), ("team_ratings", ratings)]:
-        if not rows:
-            continue
-        for i in range(0, len(rows), 500):
-            chunk = rows[i : i + 500]
-            resp = requests.post(
-                f"{url}/rest/v1/{table}?on_conflict={conflict[table]}",
-                headers=headers, json=chunk, timeout=60
-            )
-            if resp.status_code >= 300:
-                print(f"  ! {table} upsert failed: {resp.status_code} {resp.text[:200]}")
-                return
-        print(f"  pushed {len(rows)} rows to {table}")
 
 
 if __name__ == "__main__":

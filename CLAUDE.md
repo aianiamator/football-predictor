@@ -17,8 +17,9 @@ These override every other instruction in this repo.
 4. Permanent footer on every screen:
    *"Forecasts are statistical estimates from past results. Football is
    unpredictable — even strong favourites lose."*
-5. The **service-role key is server-side only**. If it ever appears anywhere
-   under `app/`, stop and report it immediately. The app uses the anon key only.
+5. **There are no API keys anywhere in the app.** The frontend fetches static
+   JSON from a CDN, so there is no service to authenticate against and nothing
+   to leak. If any key or secret ever appears under `app/`, stop and report it.
 6. The track record screen is **never hidden or filtered**. Misses must show as
    prominently as hits.
 
@@ -39,19 +40,46 @@ and position first; words only confirm it.
 
 ```
 engine/          Python. Fits models, predicts, publishes. Server-side only.
-  config.py      18 leagues configured, 8 active. Model constants.
-  data.py        Downloads + normalises football-data.co.uk. No API key needed.
+  config.py      Model constants only (XI_PER_DAY, MAX_GOALS).
+  data.py        football-data.co.uk loader + the league registry.
   model.py       Dixon-Coles. Attack/defence/home advantage, time decay, tau.
   backtest.py    Walk-forward backtest, calibration, bookmaker benchmark.
-  run.py         Fits all leagues, predicts fixtures, writes JSON + Supabase.
+  store.py       SQLite store + atomic static-JSON publishing.
+  run.py         Fits all leagues, predicts fixtures, writes store + JSON.
   settle.py      Fills in actual results on past predictions. (Phase 4)
-tests/           Verification against simulated data + leakage audit.
-app/             React + Vite + TS + Tailwind PWA. Read-only, anon key only.
-supabase_schema.sql
+schema.sql       SQLite schema. Applied automatically by store.connect().
+output/          The static files Cloudflare serves. Generated, gitignored.
+data/forecasts.db   The durable record. Generated, gitignored.
+tests/           Simulated-data verification, leakage audit, store guarantees,
+                 payload + product-constraint checks.
+app/             React + Vite + TS + Tailwind PWA. Read-only, no keys.
 ```
 
-Data flows one way: `football-data.co.uk` → `engine` → Supabase → `app`.
-**The app never writes.**
+Data flows one way:
+
+    football-data.co.uk → engine → SQLite (Hetzner) → static JSON → Cloudflare → app
+
+**The app never writes, and never authenticates.**
+
+### Why a database AND static files
+
+The app only ever needs ~6 KB of JSON, so a live database on the read path
+would be pure overhead — the `supabase-js` client alone measured 55 KB gzipped,
+nine times the payload it fetches. That is the wrong trade on metered mobile
+data.
+
+But pure JSON files cannot guarantee a forecast is never rewritten after the
+fact, and the public track record is this product's entire trust asset. So
+SQLite holds the durable record with that guarantee enforced by a trigger, and
+the engine publishes small derived JSON files for the edge to serve.
+
+| published file | contents |
+|---|---|
+| `predictions.json` | unsettled fixtures from today onward, limit 100 |
+| `track-record.json` | per-league accuracy, overall, last 20 settled |
+| `meta.json` | publish timestamp for the app's freshness check |
+
+All three are written temp-then-rename, so a reader never sees a partial file.
 
 ## The model
 
@@ -101,7 +129,7 @@ One lowercase schema everywhere downstream of `data.py`:
     odds_home  odds_draw  odds_away  season
 
 `odds_*` exist **only** as the bookmaker benchmark inside the backtest. They are
-never published, never written to Supabase, never shown to a user.
+never published, never written to the store, never shown to a user.
 
 ## What the numbers say about the product
 
@@ -124,18 +152,23 @@ number, never the raw accuracy.
 ```bash
 python -m tests.test_model      # verify the model against simulated data
 python -m tests.test_leakage    # structural + placebo leakage audit
-python -m engine.backtest       # full walk-forward backtest (~3 min, 8 leagues)
+python -m tests.test_store      # forecast immutability + publish guarantees
+python -m tests.test_payload    # payload shape + product-constraint checks
+python -m engine.backtest       # full walk-forward backtest (~3 min, 7 leagues)
 python -m engine.run            # fit, predict fixtures, publish
 python -m engine.settle         # fill in results on past predictions
 ```
 
-Raw CSVs cache under `data/raw/`, so re-runs do not re-download.
+Raw CSVs cache under `data_cache/`, so re-runs do not re-download.
 
 ## Secrets
 
-`.env` is gitignored and holds `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`.
-Never paste a key into chat, a commit, or anything under `app/`.
-The app reads only `VITE_`-prefixed vars and only ever the anon key.
+There are no API keys in this project. The engine reads a public CSV feed and
+writes to a local SQLite file; the app reads static JSON from a CDN. `.env` is
+gitignored and only ever holds non-secret config such as `FORECAST_DB`.
+
+If a key ever becomes necessary, it stays server-side. Nothing under `app/`
+may contain a secret of any kind.
 
 ## Measured results
 

@@ -1,0 +1,253 @@
+"""SQLite store plus static JSON publishing.
+
+Architecture
+------------
+    engine  ->  SQLite (data/forecasts.db, on the Hetzner box)
+                  |
+                  +-> derived static JSON  ->  Cloudflare  ->  app
+
+The database is the durable record. The app never talks to it. Instead the
+engine writes small, pre-shaped JSON files that Cloudflare serves from the
+edge, which is why the frontend carries no API key of any kind.
+
+Two guarantees this module exists to provide:
+
+  1. A forecast for a match that has already been settled is immutable.
+     Enforced by a trigger in schema.sql, and by the WHERE clause on the
+     upsert, so a re-run cannot quietly rewrite history.
+  2. JSON files are written atomically (temp file then rename), so a reader
+     can never observe a half-written file mid-publish.
+"""
+from __future__ import annotations
+
+import json
+import os
+import sqlite3
+from datetime import datetime, timezone
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+DB_PATH = Path(os.getenv("FORECAST_DB", ROOT / "data" / "forecasts.db"))
+SCHEMA_PATH = ROOT / "schema.sql"
+
+# Only the fields the app actually renders. Everything else stays in the
+# database. Bytes matter: the audience is on metered mobile data.
+LIST_FIELDS = [
+    "league_code", "league", "country", "date", "kickoff",
+    "home_team", "away_team",
+    "home_win_pct", "draw_pct", "away_win_pct",
+    "confidence_stars", "confidence_colour", "summary",
+]
+DETAIL_FIELDS = LIST_FIELDS + [
+    "over_2_5_pct", "clean_sheet_home_pct", "clean_sheet_away_pct",
+    "expected_goals_home", "expected_goals_away",
+    "likely_score", "likely_scorelines",
+]
+
+FORECAST_FIELDS = [
+    "league", "country", "kickoff",
+    "home_win_pct", "draw_pct", "away_win_pct", "over_2_5_pct",
+    "clean_sheet_home_pct", "clean_sheet_away_pct",
+    "expected_goals_home", "expected_goals_away",
+    "likely_score", "likely_scorelines",
+    "confidence", "confidence_stars", "confidence_colour", "summary",
+    "generated_at",
+]
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def connect(path: Path | str | None = None) -> sqlite3.Connection:
+    """Open the store, creating and migrating it if needed."""
+    path = Path(path) if path else DB_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(path)
+    conn.row_factory = sqlite3.Row
+    conn.execute("pragma journal_mode = WAL")
+    conn.execute("pragma foreign_keys = ON")
+    conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
+    conn.commit()
+    return conn
+
+
+def upsert_predictions(conn: sqlite3.Connection, rows: list[dict]) -> dict:
+    """Insert new forecasts; refresh existing ones only while unsettled.
+
+    Returns counts of what happened. A fixture that has already been settled
+    is left completely alone - the refreshed forecast is discarded, not
+    applied, because rewriting a scored forecast would falsify the track
+    record.
+    """
+    if not rows:
+        return {"inserted": 0, "refreshed": 0, "frozen": 0}
+
+    now = _now()
+    inserted = refreshed = frozen = 0
+
+    for r in rows:
+        key = (r["league_code"], r["date"], r["home_team"], r["away_team"])
+        existing = conn.execute(
+            "select id, was_correct from predictions "
+            "where league_code=? and date=? and home_team=? and away_team=?", key
+        ).fetchone()
+
+        if existing is not None and existing["was_correct"] is not None:
+            frozen += 1
+            continue
+
+        payload = dict(r)
+        payload["likely_scorelines"] = json.dumps(r.get("likely_scorelines", []),
+                                                  separators=(",", ":"))
+        if existing is None:
+            payload["first_published_at"] = now
+            cols = ["league_code", "date", "home_team", "away_team",
+                    "first_published_at"] + FORECAST_FIELDS
+            conn.execute(
+                f"insert into predictions ({','.join(cols)}) "
+                f"values ({','.join('?' * len(cols))})",
+                [payload.get(c) for c in cols],
+            )
+            inserted += 1
+        else:
+            sets = ",".join(f"{c}=?" for c in FORECAST_FIELDS)
+            conn.execute(
+                f"update predictions set {sets} where id=? and was_correct is null",
+                [payload.get(c) for c in FORECAST_FIELDS] + [existing["id"]],
+            )
+            refreshed += 1
+
+    conn.commit()
+    return {"inserted": inserted, "refreshed": refreshed, "frozen": frozen}
+
+
+def upsert_ratings(conn: sqlite3.Connection, rows: list[dict]) -> int:
+    if not rows:
+        return 0
+    now = _now()
+    conn.executemany(
+        "insert into team_ratings (league_code, league, team, attack, defence, overall, updated_at) "
+        "values (?,?,?,?,?,?,?) "
+        "on conflict(league_code, team) do update set "
+        "attack=excluded.attack, defence=excluded.defence, "
+        "overall=excluded.overall, updated_at=excluded.updated_at",
+        [(r["league_code"], r["league"], r["team"], r["attack"],
+          r["defence"], r["overall"], now) for r in rows],
+    )
+    conn.commit()
+    return len(rows)
+
+
+def settle(conn: sqlite3.Connection, league_code: str, date: str,
+           home_team: str, away_team: str,
+           home_goals: int, away_goals: int) -> bool:
+    """Record a finished match's result. Never touches the forecast itself."""
+    row = conn.execute(
+        "select id, home_win_pct, draw_pct, away_win_pct, was_correct "
+        "from predictions where league_code=? and date=? and home_team=? and away_team=?",
+        (league_code, date, home_team, away_team),
+    ).fetchone()
+    if row is None or row["was_correct"] is not None:
+        return False
+
+    if home_goals > away_goals:
+        actual = "H"
+    elif home_goals < away_goals:
+        actual = "A"
+    else:
+        actual = "D"
+
+    pcts = {"H": row["home_win_pct"], "D": row["draw_pct"], "A": row["away_win_pct"]}
+    forecast = max(pcts, key=pcts.get)
+
+    conn.execute(
+        "update predictions set actual_home_goals=?, actual_away_goals=?, "
+        "was_correct=?, settled_at=? where id=?",
+        (home_goals, away_goals, 1 if forecast == actual else 0, _now(), row["id"]),
+    )
+    conn.commit()
+    return True
+
+
+def _atomic_write(path: Path, text: str) -> None:
+    """Write via temp file + rename so a reader never sees a partial file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def _row_to_dict(row: sqlite3.Row, fields: list[str]) -> dict:
+    out = {}
+    for f in fields:
+        v = row[f]
+        if f == "likely_scorelines" and v:
+            v = json.loads(v)
+        out[f] = v
+    return out
+
+
+def publish_json(conn: sqlite3.Connection, out_dir: Path, limit: int = 100) -> dict:
+    """Write the static files the app fetches.
+
+    predictions.json   upcoming fixtures from today onward, newest first
+    track-record.json  per-league accuracy plus the last 20 settled matches
+    meta.json          publish timestamp, for the app's cache freshness check
+    """
+    out_dir = Path(out_dir)
+    today = datetime.now(timezone.utc).date().isoformat()
+
+    upcoming = conn.execute(
+        f"select {','.join(DETAIL_FIELDS)} from predictions "
+        "where date >= ? and was_correct is null "
+        "order by date asc, kickoff asc limit ?",
+        (today, limit),
+    ).fetchall()
+    predictions = [_row_to_dict(r, DETAIL_FIELDS) for r in upcoming]
+
+    by_league = [dict(r) for r in conn.execute(
+        "select * from accuracy_record order by accuracy_pct desc").fetchall()]
+
+    recent = conn.execute(
+        "select league_code, league, date, home_team, away_team, "
+        "home_win_pct, draw_pct, away_win_pct, "
+        "actual_home_goals, actual_away_goals, was_correct "
+        "from predictions where was_correct is not null "
+        "order by date desc, id desc limit 20"
+    ).fetchall()
+
+    totals = conn.execute(
+        "select count(*) n, sum(case when was_correct=1 then 1 else 0 end) hits "
+        "from predictions where was_correct is not null").fetchone()
+    n_settled = totals["n"] or 0
+    hits = totals["hits"] or 0
+
+    track = {
+        "overall": {
+            "matches_settled": n_settled,
+            "accuracy_pct": round(100.0 * hits / n_settled, 1) if n_settled else None,
+        },
+        "by_league": by_league,
+        "recent": [dict(r) for r in recent],
+    }
+
+    published_at = _now()
+    _atomic_write(out_dir / "predictions.json",
+                  json.dumps(predictions, separators=(",", ":")))
+    _atomic_write(out_dir / "track-record.json",
+                  json.dumps(track, separators=(",", ":")))
+    _atomic_write(out_dir / "meta.json",
+                  json.dumps({"published_at": published_at,
+                              "upcoming": len(predictions),
+                              "settled": n_settled}, separators=(",", ":")))
+
+    return {"upcoming": len(predictions), "settled": n_settled,
+            "leagues": len(by_league), "published_at": published_at}
+
+
+def stats(conn: sqlite3.Connection) -> dict:
+    p = conn.execute("select count(*) n from predictions").fetchone()["n"]
+    s = conn.execute("select count(*) n from predictions where was_correct is not null").fetchone()["n"]
+    t = conn.execute("select count(*) n from team_ratings").fetchone()["n"]
+    return {"predictions": p, "settled": s, "team_ratings": t}

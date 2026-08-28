@@ -1,11 +1,12 @@
 """Payload shape and product-constraint checks for the published output.
 
-The engine writes straight into Supabase, which the app reads with no
-interpretation layer. So the payload is the contract, and the non-negotiable
-copy rules have to be enforced here rather than trusted to review.
+The engine writes into SQLite and publishes derived static JSON, which the app
+reads with no interpretation layer. So the payload is the contract, and the
+non-negotiable copy rules have to be enforced here rather than trusted to
+review.
 
 Checks:
-  1. every payload key maps to a column in supabase_schema.sql
+  1. every payload key maps to a column in schema.sql
   2. the three-way percentages are whole numbers that sum to ~100
   3. both_teams_score is NOT published (no measurable edge in backtesting)
   4. over_2_5_pct is published only for leagues that cleared the edge bar
@@ -68,9 +69,9 @@ def _sample_payloads(n_seasons: int = 4):
 
 
 def _schema_columns() -> set[str]:
-    sql = (ROOT / "supabase_schema.sql").read_text(encoding="utf-8")
+    sql = (ROOT / "schema.sql").read_text(encoding="utf-8")
     block = sql[sql.index("create table if not exists predictions"):]
-    block = block[: block.index(");")]
+    block = block[: block.index("\n);")]
     cols = set()
     for line in block.splitlines()[1:]:
         line = line.strip()
@@ -87,7 +88,7 @@ def test_schema_match():
     keys = set(payloads[0])
     extra = keys - cols
     print(f"  {len(payloads)} payloads, {len(keys)} keys, {len(cols)} schema columns")
-    assert not extra, f"payload keys with no column in supabase_schema.sql: {sorted(extra)}"
+    assert not extra, f"payload keys with no column in schema.sql: {sorted(extra)}"
     return True
 
 
@@ -177,7 +178,7 @@ def test_summary_draw_case():
 
 def main():
     tests = [
-        ("payload keys match supabase_schema.sql", test_schema_match),
+        ("payload keys match schema.sql", test_schema_match),
         ("three-way percentages", test_percentages),
         ("both-teams-score is not published", test_btts_not_published),
         ("over/under gated to leagues with an edge", test_over_under_gating),
