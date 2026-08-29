@@ -222,6 +222,19 @@ def publish_json(conn: sqlite3.Connection, out_dir: Path, limit: int = 100) -> d
         "order by date desc, id desc limit 20"
     ).fetchall()
 
+    # Played, but the results feed has not caught up yet. Publishing these is a
+    # deliberate honesty measure: without it a match simply vanishes between
+    # being forecast and being scored, and a sceptical reader cannot tell the
+    # difference between "waiting" and "quietly dropped because we got it
+    # wrong". The forecast shown here is already frozen in the store.
+    awaiting = conn.execute(
+        "select league_code, league, date, home_team, away_team, "
+        "home_win_pct, draw_pct, away_win_pct "
+        "from predictions where was_correct is null and date < ? "
+        "order by date desc, id desc limit 20",
+        (today,),
+    ).fetchall()
+
     totals = conn.execute(
         "select count(*) n, sum(case when was_correct=1 then 1 else 0 end) hits "
         "from predictions where was_correct is not null").fetchone()
@@ -235,6 +248,7 @@ def publish_json(conn: sqlite3.Connection, out_dir: Path, limit: int = 100) -> d
         },
         "by_league": by_league,
         "recent": [dict(r) for r in recent],
+        "awaiting": [dict(r) for r in awaiting],
     }
 
     # The league registry travels with meta.json so the app can render a flag
@@ -253,11 +267,13 @@ def publish_json(conn: sqlite3.Connection, out_dir: Path, limit: int = 100) -> d
                   json.dumps({"published_at": published_at,
                               "upcoming": len(predictions),
                               "settled": n_settled,
+                              "awaiting": len(awaiting),
                               "leagues": leagues},
                              separators=(",", ":"), ensure_ascii=False))
 
     return {"upcoming": len(predictions), "settled": n_settled,
-            "leagues": len(by_league), "published_at": published_at}
+            "awaiting": len(awaiting), "leagues": len(by_league),
+            "published_at": published_at}
 
 
 def stats(conn: sqlite3.Connection) -> dict:

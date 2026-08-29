@@ -20,8 +20,8 @@ const dest = resolve(here, "..", "dist", "data")
 
 const EMPTY = {
   "predictions.json": [],
-  "track-record.json": { overall: { matches_settled: 0, accuracy_pct: null }, by_league: [], recent: [] },
-  "meta.json": { published_at: null, upcoming: 0, settled: 0, leagues: [] },
+  "track-record.json": { overall: { matches_settled: 0, accuracy_pct: null }, by_league: [], recent: [], awaiting: [] },
+  "meta.json": { published_at: null, upcoming: 0, settled: 0, awaiting: 0, leagues: [] },
 }
 
 mkdirSync(dest, { recursive: true })

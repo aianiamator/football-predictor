@@ -1,5 +1,7 @@
 import Skeleton from "../components/Skeleton"
+import ThreeWayBar from "../components/ThreeWayBar"
 import { dict, type Lang } from "../i18n"
+import { initial } from "../lib/colors"
 import type { LeagueMeta, TrackRecord as TR } from "../types"
 
 /**
@@ -26,9 +28,55 @@ export default function TrackRecord({
   if (loading && !data) return <Skeleton count={3} />
 
   const settled = data?.overall?.matches_settled ?? 0
+  const awaiting = data?.awaiting ?? []
 
   return (
     <div className="space-y-4">
+      {/* Played, but the result is not published yet.
+          This section exists so a match never silently vanishes between being
+          forecast and being scored. Without it, a reader cannot tell the
+          difference between "waiting" and "quietly dropped because it was
+          wrong" - and that doubt would undermine the whole screen. */}
+      {awaiting.length > 0 && (
+        <section className="surface rounded-xl border p-4">
+          <h2 className="font-semibold" style={{ fontSize: 18 }}>
+            {d.awaitingResults} ({awaiting.length})
+          </h2>
+          <p className="muted mb-3 mt-1" style={{ fontSize: 15, lineHeight: 1.5 }}>
+            {d.awaitingHint}
+          </p>
+          <ul className="space-y-3">
+            {awaiting.map((m, i) => (
+              <li
+                key={i}
+                className="border-t pt-3"
+                style={{ borderColor: "var(--line)" }}
+              >
+                <div className="mb-1 flex items-baseline gap-2">
+                  <span aria-hidden="true">{flagOf(m.league_code)}</span>
+                  <span className="min-w-0 flex-1 truncate font-semibold" style={{ fontSize: 17 }}>
+                    {m.home_team} v {m.away_team}
+                  </span>
+                  <span className="muted shrink-0" style={{ fontSize: 15 }}>
+                    {m.date}
+                  </span>
+                </div>
+                <ThreeWayBar
+                  home={m.home_win_pct}
+                  draw={m.draw_pct}
+                  away={m.away_win_pct}
+                  height={28}
+                  homeLabel={initial(m.home_team)}
+                  drawLabel={d.drawShort}
+                  awayLabel={initial(m.away_team)}
+                  ariaLabel={`${m.home_team} ${m.home_win_pct}%, draw ${m.draw_pct}%, ${m.away_team} ${m.away_win_pct}%`}
+                />
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
       {settled === 0 ? (
         <div className="surface rounded-xl border p-6 text-center">
           <p className="font-semibold" style={{ fontSize: 20 }}>

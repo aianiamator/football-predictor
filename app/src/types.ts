@@ -64,8 +64,23 @@ export type LeagueRecord = {
   since: string
 }
 
+/** Played, but the results feed has not caught up yet. The forecast here is
+ *  already frozen in the store - it is what was said BEFORE anyone knew the
+ *  answer, which is the point of showing it. */
+export type AwaitingMatch = {
+  league_code: string
+  league: string
+  date: string
+  home_team: string
+  away_team: string
+  home_win_pct: number
+  draw_pct: number
+  away_win_pct: number
+}
+
 export type TrackRecord = {
   overall: { matches_settled: number; accuracy_pct: number | null }
   by_league: LeagueRecord[]
   recent: SettledMatch[]
+  awaiting?: AwaitingMatch[]
 }

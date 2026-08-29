@@ -22,6 +22,8 @@ def main() -> None:
     m = json.loads(meta.read_text(encoding="utf-8"))
     print(f"- Upcoming fixtures: **{m.get('upcoming', 0)}**")
     print(f"- Settled matches: **{m.get('settled', 0)}**")
+    if m.get("awaiting"):
+        print(f"- Played, awaiting a result: **{m['awaiting']}**")
     print(f"- Published: {m.get('published_at', 'unknown')}")
 
     if not m.get("upcoming"):

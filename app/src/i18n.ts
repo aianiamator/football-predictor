@@ -54,6 +54,8 @@ export type Dict = {
   missed: string
   noneSettled: string
   noneSettledHint: string
+  awaitingResults: string
+  awaitingHint: string
   overallRecord: string
   drawWarning: string
   footer: string
@@ -95,6 +97,9 @@ export const STRINGS: Record<Lang, Dict> = {
     missed: "Wrong",
     noneSettled: "No finished matches yet",
     noneSettledHint: "This fills in as matches are played. Nothing is hidden.",
+    awaitingResults: "Played, waiting for the result",
+    awaitingHint:
+      "These matches have been played. Our forecast is already locked and shown below. The result is not published yet.",
     overallRecord: "Overall",
     drawWarning:
       "No method forecasts football reliably. About a quarter of all matches end in a draw, and a draw is the hardest result to call.",
@@ -137,6 +142,9 @@ export const STRINGS: Record<Lang, Dict> = {
     missed: "Miss",
     noneSettled: "No match don finish yet",
     noneSettledHint: "E go fill up as dem play matches. We no dey hide anything.",
+    awaitingResults: "Dem don play, we dey wait for result",
+    awaitingHint:
+      "Dem don play these matches. Wetin we talk don lock already, e dey below. The result never come out.",
     overallRecord: "Altogether",
     drawWarning:
       "No method fit forecast football well well. Like one quarter of all matches dey end for draw, and draw na the hardest one to call.",
@@ -179,6 +187,9 @@ export const STRINGS: Record<Lang, Dict> = {
     missed: "Kùnà",
     noneSettled: "Kò sí ìdíje tí ó parí síbẹ̀",
     noneSettledHint: "Yóò kún bí a ṣe ń ṣe ìdíje. A kò fi ohunkóhun pamọ́.",
+    awaitingResults: "Wọ́n ti ṣeré, à ń dúró de àbájáde",
+    awaitingHint:
+      "Àwọn ìdíje wọ̀nyí ti wáyé. Àsọtẹ́lẹ̀ wa ti wà ní títì, ó wà nísàlẹ̀. Àbájáde kò tíì jáde.",
     overallRecord: "Lápapọ̀",
     drawWarning:
       "Kò sí ọ̀nà tí ó lè sọ àsọtẹ́lẹ̀ bọ́ọ̀lù ní pípé. Nǹkan bí ìdámẹ́rin gbogbo ìdíje ni ó ń parí ní ìdọ́gba, ìdọ́gba sì ni ó ṣòro jùlọ láti sọ.",
@@ -221,6 +232,9 @@ export const STRINGS: Record<Lang, Dict> = {
     missed: "Kuskure",
     noneSettled: "Babu wasan da ya kare tukuna",
     noneSettledHint: "Zai cika yayin da ake buga wasanni. Ba mu boye komai.",
+    awaitingResults: "An buga, muna jiran sakamako",
+    awaitingHint:
+      "An riga an buga wadannan wasannin. Hasashenmu ya riga ya kulle, yana kasa. Ba a fitar da sakamako ba tukuna.",
     overallRecord: "Gaba daya",
     drawWarning:
       "Babu hanyar da za ta yi hasashen kwallon kafa daidai. Kusan kashi daya cikin hudu na dukkan wasanni na kare da canjaras, kuma canjaras shi ne mafi wuyar hasashe.",
@@ -263,6 +277,9 @@ export const STRINGS: Record<Lang, Dict> = {
     missed: "Ezighi ezi",
     noneSettled: "Ọ dịghị egwuregwu gwụchara",
     noneSettledHint: "Ọ ga-ejupụta ka a na-agba egwuregwu. Anyị anaghị ezochi ihe ọ bụla.",
+    awaitingResults: "Egwuriela ya, anyị na-eche nsonaazụ",
+    awaitingHint:
+      "Egwuriela egwuregwu ndị a. Amụma anyị akpọchiela, ọ dị n'okpuru. Ebipụtabeghị nsonaazụ.",
     overallRecord: "N'ozuzu",
     drawWarning:
       "Ọ dịghị usoro na-ebu amụma bọọlụ nke ọma. Ihe dị ka otu ụzọ n'ụzọ anọ nke egwuregwu niile na-akwụsị n'ọhaneze, ọhaneze bụkwa nke kacha sie ike ịkọ.",

@@ -166,6 +166,52 @@ def test_misses_are_published_too():
     return True
 
 
+def test_played_but_unsettled_is_published():
+    """A played match must never silently vanish.
+
+    Between kick-off and the results feed catching up, a fixture is in neither
+    the upcoming list nor the settled record. If nothing showed it, a reader
+    could not tell "waiting" from "quietly dropped because we got it wrong" -
+    so it is published under `awaiting`, carrying the forecast that is already
+    frozen in the store.
+    """
+    conn, _ = _fresh()
+    store.upsert_predictions(conn, [
+        _row(home="Played", away="Yesterday", date="2020-01-01", h=61, d=24, a=15),
+        _row(home="Future", away="Fixture", date="2099-01-01"),
+        _row(home="Done", away="Scored", date="2020-01-02"),
+    ])
+    store.settle(conn, "E0", "2020-01-02", "Done", "Scored", 2, 0)
+
+    out = Path(tempfile.mkdtemp())
+    res = store.publish_json(conn, out)
+    track = json.loads((out / "track-record.json").read_text(encoding="utf-8"))
+    meta = json.loads((out / "meta.json").read_text(encoding="utf-8"))
+    preds = json.loads((out / "predictions.json").read_text(encoding="utf-8"))
+
+    awaiting = track["awaiting"]
+    print(f"  upcoming={len(preds)} awaiting={len(awaiting)} settled={track['overall']['matches_settled']}")
+
+    assert len(awaiting) == 1, f"expected 1 awaiting, got {len(awaiting)}"
+    assert awaiting[0]["home_team"] == "Played"
+    # The forecast travels with it - that is the whole point.
+    assert awaiting[0]["home_win_pct"] == 61, "the frozen forecast must be published"
+    assert meta["awaiting"] == 1 and res["awaiting"] == 1
+
+    # A settled match belongs in the record, not in awaiting.
+    assert all(a["home_team"] != "Done" for a in awaiting), "settled match leaked into awaiting"
+    # A future fixture belongs in upcoming, not in awaiting.
+    assert all(a["home_team"] != "Future" for a in awaiting), "future fixture leaked into awaiting"
+    assert len(preds) == 1 and preds[0]["home_team"] == "Future"
+
+    # Nothing is lost: every stored forecast is in exactly one of the three.
+    total = len(preds) + len(awaiting) + track["overall"]["matches_settled"]
+    assert total == 3, f"a forecast went missing: {total} of 3 accounted for"
+    print("  every stored forecast is accounted for in exactly one place")
+    conn.close()
+    return True
+
+
 def main():
     tests = [
         ("insert then refresh while unsettled", test_insert_then_refresh),
@@ -174,6 +220,7 @@ def main():
         ("settle scores correctly and only once", test_settle_only_once_and_scores_correctly),
         ("published JSON shape and atomicity", test_publish_shape_and_atomicity),
         ("misses are published, not filtered", test_misses_are_published_too),
+        ("played but unsettled matches are visible", test_played_but_unsettled_is_published),
     ]
     failed = 0
     for name, fn in tests:
