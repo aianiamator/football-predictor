@@ -31,6 +31,7 @@ def backtest_league(
     min_train_matches: int = 400,
     refit_every_days: int = 7,
     xi: float = 0.0018,
+    ridge: float | None = None,
 ) -> pd.DataFrame:
     matches = matches[matches["league"] == league].copy()
     if len(matches) < min_train_matches + 100:
@@ -52,7 +53,9 @@ def backtest_league(
             if len(train) < min_train_matches:
                 continue
             try:
-                model = fit(train, xi=xi, league=league, reference_date=date)
+                model = (fit(train, xi=xi, league=league, reference_date=date)
+                         if ridge is None else
+                         fit(train, xi=xi, league=league, reference_date=date, ridge=ridge))
             except ValueError:
                 continue
             last_fit = date

@@ -38,3 +38,6 @@ data/dev_forecasts.db*
 
 # TS build info
 *.tsbuildinfo
+
+# Model tuning artefacts
+backtest_ridge_*.csv

@@ -28,7 +28,7 @@ import numpy as np
 from scipy.optimize import minimize
 from scipy.special import gammaln
 
-from .config import MAX_GOALS, XI_PER_DAY
+from .config import MAX_GOALS, RIDGE, XI_PER_DAY
 
 TAU_FLOOR = 1e-10
 RHO_BOUND = 0.2
@@ -55,8 +55,21 @@ def _unpack(params: np.ndarray, n: int):
     return attack, defence, gamma, rho
 
 
-def _objective(params, hi, ai, hg, ag, w, n):
-    """Weighted negative log-likelihood and its analytic gradient."""
+def _objective(params, hi, ai, hg, ag, w, n, ridge=0.0):
+    """Weighted negative log-likelihood, plus an L2 penalty, and its gradient.
+
+    The penalty is a Gaussian prior centred on "average team". Without it the
+    likelihood is UNIDENTIFIED for a team with almost no history: the optimiser
+    walks its attack and defence to the parameter bounds, expected goals
+    collapse towards zero, and the resulting forecast puts absurd mass on 0-0.
+    Observed in the wild - a promoted side with one weighted match produced a
+    91.9% draw, which is not a football forecast.
+
+    Because the likelihood term is a SUM over matches while the penalty is
+    fixed, shrinkage is automatically strong for sparse teams and negligible
+    for well-observed ones. That is the behaviour we want, and it falls out of
+    the formulation rather than needing a special case.
+    """
     attack, defence, gamma, rho = _unpack(params, n)
 
     log_lam = attack[hi] + defence[ai] + gamma
@@ -82,6 +95,8 @@ def _objective(params, hi, ai, hg, ag, w, n):
     ll = ll + np.log(tau)
 
     neg_ll = -np.sum(w * ll)
+    if ridge:
+        neg_ll += ridge * (np.sum(attack ** 2) + np.sum(defence ** 2))
 
     # --- gradient ---------------------------------------------------------
     dt_dloglam = np.zeros_like(lam)
@@ -108,6 +123,11 @@ def _objective(params, hi, ai, hg, ag, w, n):
                 + np.bincount(ai, weights=g_logmu, minlength=n))
     d_defence = (np.bincount(ai, weights=g_loglam, minlength=n)
                  + np.bincount(hi, weights=g_logmu, minlength=n))
+    if ridge:
+        # d/dtheta of (-LL + penalty); the caller negates, so subtract here.
+        d_attack = d_attack - 2.0 * ridge * attack
+        d_defence = d_defence - 2.0 * ridge * defence
+
     d_gamma = g_loglam.sum()
     d_rho = np.sum(w * dt_drho)
 
@@ -139,7 +159,7 @@ class DixonColes:
     @classmethod
     def fit(cls, df, reference_date=None, xi: float = XI_PER_DAY,
             init: "DixonColes | None" = None, maxiter: int = 400,
-            league: str | None = None) -> "DixonColes":
+            league: str | None = None, ridge: float = RIDGE) -> "DixonColes":
         """Fit to a results frame with home_team/away_team/home_goals/away_goals/date.
 
         reference_date anchors the time decay. It must be the moment of
@@ -175,7 +195,7 @@ class DixonColes:
         bounds = ([(-3.0, 3.0)] * (n - 1) + [(-3.0, 3.0)] * n
                   + [(-1.0, 1.0), (-RHO_BOUND, RHO_BOUND)])
 
-        res = minimize(_objective, x0, args=(hi, ai, hg, ag, w, n), jac=True,
+        res = minimize(_objective, x0, args=(hi, ai, hg, ag, w, n, ridge), jac=True,
                        method="L-BFGS-B", bounds=bounds,
                        options={"maxiter": maxiter, "ftol": 1e-10, "gtol": 1e-7})
 
@@ -262,11 +282,12 @@ class DixonColes:
 
 
 def fit(df, xi: float = XI_PER_DAY, league: str | None = None,
-        reference_date=None, init: "DixonColes | None" = None) -> DixonColes:
+        reference_date=None, init: "DixonColes | None" = None,
+        ridge: float = RIDGE) -> DixonColes:
     """Module-level entry point. Fit one league's ratings.
 
     Raises ValueError when there is not enough data to identify the ratings,
     which callers are expected to catch and skip.
     """
     return DixonColes.fit(df, reference_date=reference_date, xi=xi,
-                          init=init, league=league)
+                          init=init, league=league, ridge=ridge)

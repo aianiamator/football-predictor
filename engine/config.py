@@ -14,3 +14,10 @@ XI_PER_DAY = 0.0018
 
 # Score matrix truncation. Beyond 10 goals the mass is negligible.
 MAX_GOALS = 10
+
+# L2 penalty on attack and defence ratings - a Gaussian prior centred on
+# "average team". Set to 0.0 to reproduce the original unpenalised fit.
+# The value is selected by chronological out-of-sample validation in
+# tools/tune_ridge.py, on matches strictly EARLIER than the reported test
+# period, and must never be tuned against the test set.
+RIDGE = 2.0

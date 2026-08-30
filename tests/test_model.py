@@ -205,6 +205,48 @@ def test_decay():
     return True
 
 
+def test_no_implausible_forecasts():
+    """A sparse-data team must not produce an absurd forecast.
+
+    Unpenalised MLE is unidentified for a team with almost no weighted history:
+    the optimiser drives its attack and defence to the parameter bounds,
+    expected goals collapse toward zero, and nearly all mass lands on 0-0. That
+    produced a real 91.9% draw forecast for a promoted side with one match.
+
+    No legitimate football forecast puts a draw above roughly 35%, because a
+    draw needs both teams to score the same and that is bounded by how often
+    football produces level scorelines. This asserts the ridge prior keeps
+    every forecast inside a defensible range.
+    """
+    df, _ = simulate(n_teams=20, n_seasons=6, seed=7)
+
+    # A team with a single match, the pathological case.
+    lone = pd.DataFrame([{
+        "date": df["date"].max(), "home_team": "Newcomer",
+        "away_team": df["home_team"].iloc[0], "home_goals": 0, "away_goals": 0,
+    }])
+    sparse = pd.concat([df, lone], ignore_index=True)
+
+    model = DixonColes.fit(sparse, xi=0.0)
+    worst_draw = 0.0
+    for opponent in model.teams[:8]:
+        if opponent == "Newcomer":
+            continue
+        for home, away in (("Newcomer", opponent), (opponent, "Newcomer")):
+            p = model.predict(home, away)
+            worst_draw = max(worst_draw, p["draw"])
+            total = p["home_win"] + p["draw"] + p["away_win"]
+            assert abs(total - 1.0) < 1e-9, f"probabilities sum to {total}"
+
+    lam, mu = model.rates("Newcomer", model.teams[0] if model.teams[0] != "Newcomer" else model.teams[1])
+    print(f"  one-match team: attack {model.attack['Newcomer']:+.3f}, "
+          f"expected goals {lam:.2f}, worst P(draw) {worst_draw:.3f}")
+    assert abs(model.attack["Newcomer"]) < 2.5, "rating ran to the optimiser bound"
+    assert worst_draw < 0.45, f"implausible draw forecast: {worst_draw:.3f}"
+    assert lam > 0.2, f"expected goals collapsed to {lam:.3f}"
+    return True
+
+
 def main():
     tests = [
         ("time decay weights", test_decay),
@@ -212,6 +254,7 @@ def main():
         ("score distribution", test_distribution),
         ("parameter recovery from simulated data", test_recovery),
         ("rho recovery at large n", test_rho_recovery),
+        ("sparse teams give plausible forecasts", test_no_implausible_forecasts),
     ]
     failed = 0
     for name, fn in tests:
