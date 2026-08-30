@@ -63,10 +63,32 @@ jobs:
           git add -f output/*.json data/forecasts.db
           if git diff --cached --quiet; then
             echo "Nothing changed. Between rounds this is normal, not a failure."
-          else
-            git commit -m "Forecasts: $(date -u '+%Y-%m-%d %H:%M UTC')"
-            git push
+            exit 0
           fi
+          git commit -m "Forecasts: $(date -u '+%Y-%m-%d %H:%M UTC')"
+
+          # The push races anything else that writes to main - a human pushing,
+          # or a re-run of an older run whose checkout predates newer commits.
+          # A rejected push is transient, so rebase our single commit onto the
+          # newer main and try again rather than failing the whole run.
+          for attempt in 1 2 3; do
+            if git push; then
+              echo "published on attempt $attempt"
+              exit 0
+            fi
+            echo "push rejected on attempt $attempt - main moved; rebasing onto it"
+            if ! git pull --rebase --no-edit origin main; then
+              git rebase --abort || true
+              echo "::error::Rebase conflicted, most likely on data/forecasts.db."
+              echo "Not forcing: the remote database may hold forecasts this run"
+              echo "never saw, and overwriting it would destroy record history."
+              echo "The next scheduled run starts from the newer database and"
+              echo "will re-derive everything, so this is self-healing."
+              exit 1
+            fi
+          done
+          echo "::error::Could not publish after 3 attempts."
+          exit 1
 
       - name: Summary
         if: always()
