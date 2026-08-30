@@ -20,7 +20,7 @@ const dest = resolve(here, "..", "dist", "data")
 
 const EMPTY = {
   "predictions.json": [],
-  "track-record.json": { overall: { matches_settled: 0, accuracy_pct: null }, by_league: [], recent: [], awaiting: [] },
+  "track-record.json": { overall: { matches_settled: 0, accuracy_pct: null }, by_league: [], recent: [], awaiting: [], awaiting_total: 0 },
   "meta.json": { published_at: null, upcoming: 0, settled: 0, awaiting: 0, leagues: [] },
 }
 

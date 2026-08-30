@@ -235,6 +235,14 @@ def publish_json(conn: sqlite3.Connection, out_dir: Path, limit: int = 100) -> d
         (today,),
     ).fetchall()
 
+    # The list above is capped, but the COUNT must be the true total. Showing
+    # "waiting (20)" while 35 are actually waiting would understate exactly the
+    # thing this section exists to be honest about.
+    awaiting_total = conn.execute(
+        "select count(*) from predictions where was_correct is null and date < ?",
+        (today,),
+    ).fetchone()[0]
+
     totals = conn.execute(
         "select count(*) n, sum(case when was_correct=1 then 1 else 0 end) hits "
         "from predictions where was_correct is not null").fetchone()
@@ -249,6 +257,7 @@ def publish_json(conn: sqlite3.Connection, out_dir: Path, limit: int = 100) -> d
         "by_league": by_league,
         "recent": [dict(r) for r in recent],
         "awaiting": [dict(r) for r in awaiting],
+        "awaiting_total": int(awaiting_total),
     }
 
     # The league registry travels with meta.json so the app can render a flag
@@ -267,12 +276,12 @@ def publish_json(conn: sqlite3.Connection, out_dir: Path, limit: int = 100) -> d
                   json.dumps({"published_at": published_at,
                               "upcoming": len(predictions),
                               "settled": n_settled,
-                              "awaiting": len(awaiting),
+                              "awaiting": int(awaiting_total),
                               "leagues": leagues},
                              separators=(",", ":"), ensure_ascii=False))
 
     return {"upcoming": len(predictions), "settled": n_settled,
-            "awaiting": len(awaiting), "leagues": len(by_league),
+            "awaiting": int(awaiting_total), "leagues": len(by_league),
             "published_at": published_at}
 
 

@@ -83,4 +83,6 @@ export type TrackRecord = {
   by_league: LeagueRecord[]
   recent: SettledMatch[]
   awaiting?: AwaitingMatch[]
+  /** True total waiting; the list above is capped for byte size. */
+  awaiting_total?: number
 }

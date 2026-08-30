@@ -29,6 +29,8 @@ export default function TrackRecord({
 
   const settled = data?.overall?.matches_settled ?? 0
   const awaiting = data?.awaiting ?? []
+  // The published list is capped; the count must be the true total.
+  const awaitingTotal = data?.awaiting_total ?? awaiting.length
 
   return (
     <div className="space-y-4">
@@ -40,7 +42,7 @@ export default function TrackRecord({
       {awaiting.length > 0 && (
         <section className="surface rounded-xl border p-4">
           <h2 className="font-semibold" style={{ fontSize: 18 }}>
-            {d.awaitingResults} ({awaiting.length})
+            {d.awaitingResults} ({awaitingTotal})
           </h2>
           <p className="muted mb-3 mt-1" style={{ fontSize: 15, lineHeight: 1.5 }}>
             {d.awaitingHint}
