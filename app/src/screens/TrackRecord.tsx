@@ -54,14 +54,18 @@ export default function TrackRecord({
                 className="border-t pt-3"
                 style={{ borderColor: "var(--line)" }}
               >
-                <div className="mb-1 flex items-baseline gap-2">
+                {/* League NAME as well as the flag. Windows has no country
+                    flag glyphs and renders the underlying letters instead, so
+                    a flag alone leaves a Windows reader looking at "PT" with
+                    no idea which competition that is. The name costs one line
+                    and works on every platform. */}
+                <div className="muted mb-1 flex items-baseline gap-2" style={{ fontSize: 15 }}>
                   <span aria-hidden="true">{flagOf(m.league_code)}</span>
-                  <span className="min-w-0 flex-1 truncate font-semibold" style={{ fontSize: 17 }}>
-                    {m.home_team} v {m.away_team}
-                  </span>
-                  <span className="muted shrink-0" style={{ fontSize: 15 }}>
-                    {m.date}
-                  </span>
+                  <span className="min-w-0 flex-1 truncate">{m.league}</span>
+                  <span className="shrink-0">{m.date}</span>
+                </div>
+                <div className="mb-1 truncate font-semibold" style={{ fontSize: 17 }}>
+                  {m.home_team} v {m.away_team}
                 </div>
                 <ThreeWayBar
                   home={m.home_win_pct}
