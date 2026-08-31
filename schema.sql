@@ -43,15 +43,31 @@ create table if not exists predictions (
   summary_key           text,                       -- e.g. "strong_favourite"
   summary_args          text,                       -- JSON, fills the template
 
+  -- Which engine produced this forecast. Never rewritten, so v1 and v2 can be
+  -- compared fairly rather than history being re-scored by newer code.
+  model_version         text,
+  -- Gap in points between the top two outcomes. 41/27/32 and 41/18/41 have the
+  -- same favourite but are not equally decisive.
+  confidence_margin     real,
+  confidence_band       text,                       -- high/strong/moderate/low
+  margin_band           text,                       -- clear_edge .. too_close
+  model_pick            text,                       -- H, D, A, or TIE
+
   -- When this fixture was FIRST forecast. Never updated.
   first_published_at    text    not null,
   -- When the forecast was last refreshed (only while unsettled).
   generated_at          text    not null,
 
   -- Filled in by the settle job, only for matches that have finished.
+  -- fixture_status distinguishes "not played yet" from "will never be played".
+  -- A postponed or abandoned match must never count toward accuracy either way,
+  -- so was_correct stays NULL and the status records why.
+  fixture_status        text default 'pending',     -- pending|finished|postponed|cancelled|abandoned|void
   actual_home_goals     integer,
   actual_away_goals     integer,
-  was_correct           integer,                    -- 0/1
+  actual_result         text,                       -- HOME | DRAW | AWAY
+  was_correct           integer,                    -- 0/1, NULL unless finished
+  brier_score           real,                       -- per-match, computed at settlement
   settled_at            text,
 
   unique (league_code, date, home_team, away_team)
@@ -80,7 +96,7 @@ drop trigger if exists predictions_freeze_settled;
 create trigger predictions_freeze_settled
 before update on predictions
 for each row
-when old.was_correct is not null
+when old.fixture_status = 'finished'
   and (
        new.home_win_pct       is not old.home_win_pct
     or new.draw_pct           is not old.draw_pct

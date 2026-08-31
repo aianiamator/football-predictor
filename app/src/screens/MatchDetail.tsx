@@ -2,6 +2,7 @@ import ThreeWayBar from "../components/ThreeWayBar"
 import TeamBadge from "../components/TeamBadge"
 import Stars from "../components/Stars"
 import SpeakButton from "../components/SpeakButton"
+import PickBadge from "../components/PickBadge"
 import { kickoffLabel } from "../components/MatchCard"
 import { dict, forecastSentence, type Lang } from "../i18n"
 import { initial } from "../lib/colors"
@@ -137,6 +138,8 @@ export default function MatchDetail({
           ariaLabel={`${p.home_team} ${p.home_win_pct}%, draw ${p.draw_pct}%, ${p.away_team} ${p.away_win_pct}%`}
         />
       </div>
+
+      <PickBadge p={p} lang={lang} />
 
       <div className="mt-4 flex items-start gap-3">
         <div className="min-w-0 flex-1">

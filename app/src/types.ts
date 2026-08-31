@@ -18,6 +18,11 @@ export type Prediction = {
   summary_key: string | null
   summary_args: Record<string, unknown> | null
   summary: string
+  // Decision layer, computed once by the engine and stored with the forecast.
+  model_pick?: "H" | "D" | "A" | "TIE" | null
+  confidence_band?: "high" | "strong" | "moderate" | "low" | null
+  margin_band?: "clear_edge" | "reasonable_edge" | "small_edge" | "too_close" | null
+  confidence_margin?: number | null
   // Present on the detail payload.
   over_2_5_pct?: number | null
   clean_sheet_home_pct?: number | null
@@ -53,7 +58,11 @@ export type SettledMatch = {
   away_win_pct: number
   actual_home_goals: number
   actual_away_goals: number
-  was_correct: number
+  actual_result?: string | null
+  model_pick?: string | null
+  confidence_band?: string | null
+  /** null when the fixture was too close to call and deliberately unscored. */
+  was_correct: number | null
 }
 
 export type LeagueRecord = {
@@ -78,6 +87,43 @@ export type AwaitingMatch = {
   away_win_pct: number
 }
 
+export type Block = {
+  completed: number
+  correct: number
+  incorrect: number
+  hit_rate: number | null
+  brier: number | null
+  sample_band: "very_small" | "early" | "developing" | "larger_sample"
+}
+
+export type Performance = {
+  overall: Block & {
+    total_forecasts: number
+    pending: number
+    not_played: number
+    unscored_ties: number
+  }
+  by_confidence: (Block & { band: string })[]
+  by_outcome: (Block & { pick: string })[]
+  by_league: (Block & { league_code: string; league: string })[]
+  calibration: {
+    band: string
+    predictions: number
+    correct: number
+    actual_rate: number | null
+    average_predicted: number
+    gap: number | null
+    sample_band: string
+  }[]
+  baselines: {
+    always_home?: { completed: number; correct: number; hit_rate: number | null }
+    base_rates?: { completed: number; brier: number }
+    model_vs_always_home_points?: number | null
+    model_vs_base_rates_brier?: number | null
+  }
+  model_versions: Record<string, number>
+}
+
 export type TrackRecord = {
   overall: { matches_settled: number; accuracy_pct: number | null }
   by_league: LeagueRecord[]
@@ -85,4 +131,5 @@ export type TrackRecord = {
   awaiting?: AwaitingMatch[]
   /** True total waiting; the list above is capped for byte size. */
   awaiting_total?: number
+  performance?: Performance
 }

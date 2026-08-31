@@ -56,6 +56,25 @@ export type Dict = {
   noneSettledHint: string
   awaitingResults: string
   awaitingHint: string
+  modelPick: string
+  edge: string
+  tooCloseToCall: string
+  confHigh: string
+  confStrong: string
+  confModerate: string
+  confLow: string
+  completed: string
+  correctLabel: string
+  hitRate: string
+  byConfidence: string
+  byOutcome: string
+  byLeague: string
+  howSureWeWere: string
+  vsAlwaysHome: string
+  sampleVerySmall: string
+  sampleEarly: string
+  sampleDeveloping: string
+  sampleLarger: string
   overallRecord: string
   drawWarning: string
   footer: string
@@ -100,6 +119,25 @@ export const STRINGS: Record<Lang, Dict> = {
     awaitingResults: "Played, waiting for the result",
     awaitingHint:
       "These matches have been played. Our forecast is already locked and shown below. The result is not published yet.",
+    modelPick: "Our pick",
+    edge: "Edge",
+    tooCloseToCall: "Too close to call",
+    confHigh: "High",
+    confStrong: "Strong",
+    confModerate: "Moderate",
+    confLow: "Low",
+    completed: "finished",
+    correctLabel: "right",
+    hitRate: "Right so far",
+    byConfidence: "How confident we were",
+    byOutcome: "By what we picked",
+    byLeague: "By league",
+    howSureWeWere: "Does higher confidence actually do better?",
+    vsAlwaysHome: "vs always picking the home team",
+    sampleVerySmall: "Very small sample - far too early to judge",
+    sampleEarly: "Early days - treat with caution",
+    sampleDeveloping: "Building up evidence",
+    sampleLarger: "A meaningful sample",
     overallRecord: "Overall",
     drawWarning:
       "No method forecasts football reliably. About a quarter of all matches end in a draw, and a draw is the hardest result to call.",
@@ -145,6 +183,25 @@ export const STRINGS: Record<Lang, Dict> = {
     awaitingResults: "Dem don play, we dey wait for result",
     awaitingHint:
       "Dem don play these matches. Wetin we talk don lock already, e dey below. The result never come out.",
+    modelPick: "Wetin we pick",
+    edge: "Gap",
+    tooCloseToCall: "E too tight to call",
+    confHigh: "High",
+    confStrong: "Strong",
+    confModerate: "Moderate",
+    confLow: "Low",
+    completed: "don finish",
+    correctLabel: "correct",
+    hitRate: "Correct so far",
+    byConfidence: "How confident we been",
+    byOutcome: "By wetin we pick",
+    byLeague: "By league",
+    howSureWeWere: "When we confident pass, e dey work?",
+    vsAlwaysHome: "compare to always pick home team",
+    sampleVerySmall: "Small sample well well - e too early to judge",
+    sampleEarly: "Still early - take am easy",
+    sampleDeveloping: "Evidence dey build up",
+    sampleLarger: "Sample don plenty",
     overallRecord: "Altogether",
     drawWarning:
       "No method fit forecast football well well. Like one quarter of all matches dey end for draw, and draw na the hardest one to call.",
@@ -190,6 +247,25 @@ export const STRINGS: Record<Lang, Dict> = {
     awaitingResults: "Wọ́n ti ṣeré, à ń dúró de àbájáde",
     awaitingHint:
       "Àwọn ìdíje wọ̀nyí ti wáyé. Àsọtẹ́lẹ̀ wa ti wà ní títì, ó wà nísàlẹ̀. Àbájáde kò tíì jáde.",
+    modelPick: "Àṣàyàn wa",
+    edge: "Ìyàtọ̀",
+    tooCloseToCall: "Ó sún mọ́ra jù láti sọ",
+    confHigh: "Gíga",
+    confStrong: "Lágbára",
+    confModerate: "Ààrin",
+    confLow: "Kékeré",
+    completed: "tí ó parí",
+    correctLabel: "tọ̀nà",
+    hitRate: "Tọ̀nà títí di ìsinsìnyí",
+    byConfidence: "Bí a ṣe dá wa lójú tó",
+    byOutcome: "Nípa ohun tí a yàn",
+    byLeague: "Nípa lìgì",
+    howSureWeWere: "Ṣé ìdánilójú púpọ̀ ń ṣèrànwọ́?",
+    vsAlwaysHome: "ní ìfiwéra pẹ̀lú yíyan ẹgbẹ́ ilé nígbà gbogbo",
+    sampleVerySmall: "Àpẹẹrẹ kéré gan-an - ó tètè jù láti dájọ́",
+    sampleEarly: "Ó ṣì kùn - ṣọ́ra",
+    sampleDeveloping: "Ẹ̀rí ń pọ̀ sí i",
+    sampleLarger: "Àpẹẹrẹ tí ó tó",
     overallRecord: "Lápapọ̀",
     drawWarning:
       "Kò sí ọ̀nà tí ó lè sọ àsọtẹ́lẹ̀ bọ́ọ̀lù ní pípé. Nǹkan bí ìdámẹ́rin gbogbo ìdíje ni ó ń parí ní ìdọ́gba, ìdọ́gba sì ni ó ṣòro jùlọ láti sọ.",
@@ -235,6 +311,25 @@ export const STRINGS: Record<Lang, Dict> = {
     awaitingResults: "An buga, muna jiran sakamako",
     awaitingHint:
       "An riga an buga wadannan wasannin. Hasashenmu ya riga ya kulle, yana kasa. Ba a fitar da sakamako ba tukuna.",
+    modelPick: "Zabinmu",
+    edge: "Bambanci",
+    tooCloseToCall: "Ya yi kusa da yanke hukunci",
+    confHigh: "Babba",
+    confStrong: "Karfi",
+    confModerate: "Matsakaici",
+    confLow: "Kadan",
+    completed: "da suka kare",
+    correctLabel: "daidai",
+    hitRate: "Daidai zuwa yanzu",
+    byConfidence: "Yadda muka tabbata",
+    byOutcome: "Bisa abin da muka zaba",
+    byLeague: "Bisa gasa",
+    howSureWeWere: "Shin karin tabbaci yana taimakawa?",
+    vsAlwaysHome: "idan aka kwatanta da zaben tawagar gida kullum",
+    sampleVerySmall: "Samfurin kadan sosai - da wuri sosai a yanke hukunci",
+    sampleEarly: "Har yanzu da wuri - a yi hankali",
+    sampleDeveloping: "Shaida na karuwa",
+    sampleLarger: "Samfurin ya isa",
     overallRecord: "Gaba daya",
     drawWarning:
       "Babu hanyar da za ta yi hasashen kwallon kafa daidai. Kusan kashi daya cikin hudu na dukkan wasanni na kare da canjaras, kuma canjaras shi ne mafi wuyar hasashe.",
@@ -280,6 +375,25 @@ export const STRINGS: Record<Lang, Dict> = {
     awaitingResults: "Egwuriela ya, anyị na-eche nsonaazụ",
     awaitingHint:
       "Egwuriela egwuregwu ndị a. Amụma anyị akpọchiela, ọ dị n'okpuru. Ebipụtabeghị nsonaazụ.",
+    modelPick: "Nhọrọ anyị",
+    edge: "Ọdịiche",
+    tooCloseToCall: "Ọ dị nso nke ukwuu ikpebi",
+    confHigh: "Elu",
+    confStrong: "Ike",
+    confModerate: "Ọkara",
+    confLow: "Ala",
+    completed: "gwụchara",
+    correctLabel: "ziri ezi",
+    hitRate: "Ziri ezi ruo ugbu a",
+    byConfidence: "Otú anyị si jide n'aka",
+    byOutcome: "Site na ihe anyị họọrọ",
+    byLeague: "Site na ligi",
+    howSureWeWere: "Ijide n'aka karịa ọ na-enye aka?",
+    vsAlwaysHome: "tụnyere ịhọrọ ndị ụlọ mgbe niile",
+    sampleVerySmall: "Nlele dị ntakịrị - oge eruberughi ikpe ikpe",
+    sampleEarly: "Ka dị n'oge - jiri nwayọọ",
+    sampleDeveloping: "Ihe akaebe na-abawanye",
+    sampleLarger: "Nlele zuru ezu",
     overallRecord: "N'ozuzu",
     drawWarning:
       "Ọ dịghị usoro na-ebu amụma bọọlụ nke ọma. Ihe dị ka otu ụzọ n'ụzọ anọ nke egwuregwu niile na-akwụsị n'ọhaneze, ọhaneze bụkwa nke kacha sie ike ịkọ.",

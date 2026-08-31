@@ -2,6 +2,7 @@ import ThreeWayBar from "./ThreeWayBar"
 import TeamBadge from "./TeamBadge"
 import Stars from "./Stars"
 import SpeakButton from "./SpeakButton"
+import PickBadge from "./PickBadge"
 import { dict, forecastSentence, type Lang } from "../i18n"
 import { initial } from "../lib/colors"
 import type { LeagueMeta, Prediction } from "../types"
@@ -86,6 +87,8 @@ export default function MatchCard({
           />
         </div>
       </button>
+
+      <PickBadge p={p} lang={lang} />
 
       <div className="mt-3 flex items-start gap-3">
         <div className="min-w-0 flex-1">

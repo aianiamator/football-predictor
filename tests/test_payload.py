@@ -176,6 +176,26 @@ def test_summary_draw_case():
     return True
 
 
+def test_no_banned_words_in_interface_strings():
+    """Every UI string in every language must be clean.
+
+    The payload test covers what the engine publishes; this covers what the app
+    itself says. A banned word slipped in through a new analytics heading -
+    "How sure we were" - which no payload check would ever have seen, because
+    it lives only in the frontend.
+    """
+    src = (ROOT / "app" / "src" / "i18n.ts").read_text(encoding="utf-8")
+    # Only the quoted string VALUES, not keys or comments.
+    values = re.findall(r':\s*"((?:[^"\\]|\\.)*)"', src)
+    hits = []
+    for v in values:
+        for w in _banned_hits(v):
+            hits.append(f"{w!r} in {v[:60]!r}")
+    print(f"  {len(values)} interface strings checked across all languages")
+    assert not hits, "banned words in interface text: " + "; ".join(hits)
+    return True
+
+
 def main():
     tests = [
         ("payload keys match schema.sql", test_schema_match),
@@ -186,6 +206,7 @@ def main():
         ("no certainty claims", test_no_certainty_claims),
         ("confidence bands", test_confidence_bands),
         ("draw-favoured summary", test_summary_draw_case),
+        ("no banned words in any interface string", test_no_banned_words_in_interface_strings),
     ]
     failed = 0
     for name, fn in tests:

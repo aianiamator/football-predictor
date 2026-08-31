@@ -36,7 +36,7 @@ def settle(leagues: list[str] | None = None, n_seasons: int = 2,
     try:
         pending = conn.execute(
             "select id, league_code, date, home_team, away_team "
-            "from predictions where was_correct is null order by date"
+            "from predictions where fixture_status = 'pending' order by date"
         ).fetchall()
 
         if not pending:
@@ -80,7 +80,8 @@ def settle(leagues: list[str] | None = None, n_seasons: int = 2,
         if settled:
             acc = conn.execute(
                 "select count(*) n, sum(case when was_correct=1 then 1 else 0 end) hits "
-                "from predictions where was_correct is not null").fetchone()
+                "from predictions where fixture_status='finished' "
+                "and was_correct is not null").fetchone()
             if acc["n"]:
                 print(f"Track record now {acc['hits']}/{acc['n']} "
                       f"({100.0 * acc['hits'] / acc['n']:.1f}%)")

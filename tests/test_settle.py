@@ -72,10 +72,16 @@ def test_settles_real_results():
     assert res["settled"] > 0, "nothing settled; the feed matching is broken"
 
     conn = store.connect(db)
+    # Ties are settled and Brier-scored but deliberately not marked right or
+    # wrong, so the accuracy checks below run over SCORED rows only.
+    n_ties = conn.execute("select count(*) from predictions where "
+                          "fixture_status='finished' and was_correct is null").fetchone()[0]
     rows = conn.execute(
         "select id, date, home_team, away_team, home_win_pct, draw_pct, away_win_pct, "
-        "summary, actual_home_goals, actual_away_goals, was_correct "
-        "from predictions where was_correct is not null").fetchall()
+        "summary, model_pick, actual_home_goals, actual_away_goals, was_correct "
+        "from predictions where fixture_status='finished' "
+        "and was_correct is not null").fetchall()
+    print(f"  too close to call, left unscored: {n_ties}")
 
     wrong_score = mismatched = altered = 0
     for r in rows:
@@ -84,8 +90,11 @@ def test_settles_real_results():
         if real and (r["actual_home_goals"], r["actual_away_goals"]) != real:
             wrong_score += 1
 
-        pcts = {"H": r["home_win_pct"], "D": r["draw_pct"], "A": r["away_win_pct"]}
-        forecast = max(pcts, key=pcts.get)
+        # Score against the pick STORED with the forecast, which is what the
+        # engine actually committed to before kick-off.
+        forecast = r["model_pick"] or max(
+            {"H": r["home_win_pct"], "D": r["draw_pct"], "A": r["away_win_pct"]}.items(),
+            key=lambda kv: kv[1])[0]
         actual = ("H" if r["actual_home_goals"] > r["actual_away_goals"]
                   else "A" if r["actual_home_goals"] < r["actual_away_goals"] else "D")
         if r["was_correct"] != int(forecast == actual):
@@ -125,12 +134,22 @@ def test_publishes_track_record():
     settle(leagues=[CODE], n_seasons=3, publish=True, db=db, out=out)
 
     track = json.loads((out / "track-record.json").read_text(encoding="utf-8"))
-    flags = [m["was_correct"] for m in track["recent"]]
+    # A tie carries was_correct = None, so exclude those before sorting.
+    flags = sorted({m["was_correct"] for m in track["recent"]
+                    if m["was_correct"] is not None})
+    perf = track["performance"]["overall"]
     print(f"  published {track['overall']['matches_settled']} settled, "
           f"accuracy {track['overall']['accuracy_pct']}%")
-    print(f"  last 20 contains hits and misses: {sorted(set(flags))}")
+    print(f"  scored {perf['completed']}, unscored ties {perf['unscored_ties']}, "
+          f"Brier {perf['brier']}")
+    print(f"  last 20 contains hits and misses: {flags}")
     assert track["overall"]["matches_settled"] > 0
-    assert 0 in flags and 1 in flags, "the record must show misses as well as hits"
+    assert flags == [0, 1], "the record must show misses as well as hits"
+    # Both count SCORED matches; ties are excluded from each by design.
+    assert perf["completed"] == track["overall"]["matches_settled"],         "the two scored counts disagree"
+    assert perf["unscored_ties"] > 0, "expected some fixtures too close to call"
+    assert perf["brier"] is not None and 0 < perf["brier"] < 2
+    assert perf["correct"] + perf["incorrect"] == perf["completed"]
     return True
 
 

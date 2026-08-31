@@ -1,5 +1,6 @@
 import Skeleton from "../components/Skeleton"
 import ThreeWayBar from "../components/ThreeWayBar"
+import PerformanceBlocks from "../components/PerformanceBlocks"
 import { dict, type Lang } from "../i18n"
 import { initial } from "../lib/colors"
 import type { LeagueMeta, TrackRecord as TR } from "../types"
@@ -108,7 +109,28 @@ export default function TrackRecord({
               </span>
             </div>
             <Bar pct={data?.overall?.accuracy_pct ?? 0} />
+            {data?.performance?.overall && (
+              <div className="muted mt-2" style={{ fontSize: 15, lineHeight: 1.5 }}>
+                {data.performance.overall.correct}/{data.performance.overall.completed}{" "}
+                {d.correctLabel}
+                {data.performance.overall.sample_band !== "larger_sample" && (
+                  <>
+                    {" · "}
+                    {data.performance.overall.sample_band === "very_small"
+                      ? d.sampleVerySmall
+                      : data.performance.overall.sample_band === "early"
+                        ? d.sampleEarly
+                        : d.sampleDeveloping}
+                  </>
+                )}
+                {data.performance.overall.unscored_ties > 0 && (
+                  <> · {data.performance.overall.unscored_ties} {d.tooCloseToCall}</>
+                )}
+              </div>
+            )}
           </section>
+
+          {data?.performance && <PerformanceBlocks perf={data.performance} lang={lang} />}
 
           {/* Per league */}
           {(data?.by_league ?? []).map((l) => (
@@ -136,6 +158,7 @@ export default function TrackRecord({
             </h2>
             <ul className="space-y-2">
               {(data?.recent ?? []).map((m, i) => {
+                const tie = m.was_correct === null || m.was_correct === undefined
                 const hit = m.was_correct === 1
                 const pcts = { H: m.home_win_pct, D: m.draw_pct, A: m.away_win_pct }
                 const forecast = (Object.keys(pcts) as (keyof typeof pcts)[]).reduce((a, b) =>
@@ -147,10 +170,14 @@ export default function TrackRecord({
                   <li key={i} className="flex items-center gap-3 border-t pt-2" style={{ borderColor: "var(--line)" }}>
                     <span
                       className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full font-bold text-white"
-                      style={{ background: hit ? "#15803d" : "#b91c1c" }}
-                      aria-label={hit ? d.correct : d.missed}
+                      style={{ background: tie ? "#78716c" : hit ? "#15803d" : "#b91c1c" }}
+                      aria-label={tie ? d.tooCloseToCall : hit ? d.correct : d.missed}
                     >
-                      {hit ? (
+                      {tie ? (
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                          <path d="M5 12h14" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+                        </svg>
+                      ) : hit ? (
                         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                           <path d="M5 13l4 4L19 7" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
                         </svg>

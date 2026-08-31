@@ -21,6 +21,8 @@ from zoneinfo import ZoneInfo
 
 from . import data as dataio
 from . import store
+from .config import (CONFIDENCE_BANDS, MARGIN_BANDS, MODEL_VERSION,
+                     TIE_MARGIN_POINTS)
 from .model import fit
 
 # football-data publishes kick-off times in UK local time. Nigeria is UTC+1 all
@@ -60,6 +62,36 @@ def confidence_band(p: float) -> tuple[str, int, str]:
     if p >= 0.52:
         return "moderate", 2, "#b45309"  # amber
     return "close", 1, "#78716c"         # warm stone
+
+
+def decide(home_pct: int, draw_pct: int, away_pct: int) -> dict:
+    """Turn three percentages into a pick, a confidence band and an edge band.
+
+    Two forecasts with the same favourite are not equally decisive. 41/27/32
+    and 41/18/41 both top out at 41%, but the first has a 9-point edge over its
+    nearest rival and the second is a dead heat. The margin is what separates
+    them, so it is computed and published rather than left for a reader to work
+    out from three numbers.
+
+    When the top two are within TIE_MARGIN_POINTS the pick is TIE. Such a
+    forecast is deliberately NOT scored correct or incorrect later: calling one
+    of two indistinguishable outcomes the "prediction" would be arbitrary, and
+    scoring an arbitrary choice would corrupt the track record in whichever
+    direction luck happened to fall.
+    """
+    pcts = {"H": home_pct, "D": draw_pct, "A": away_pct}
+    ordered = sorted(pcts.items(), key=lambda kv: kv[1], reverse=True)
+    (top_key, top), (_, second) = ordered[0], ordered[1]
+    margin = float(top - second)
+
+    pick = "TIE" if margin <= TIE_MARGIN_POINTS else top_key
+
+    top_p = top / 100.0
+    confidence = next(label for label, floor in CONFIDENCE_BANDS if top_p >= floor)
+    edge = next(label for label, floor in MARGIN_BANDS if margin >= floor)
+
+    return {"model_pick": pick, "confidence_band": confidence,
+            "margin_band": edge, "confidence_margin": round(margin, 1)}
 
 
 def kickoff_to_utc(date, kickoff: str) -> str | None:
@@ -119,6 +151,11 @@ def build_fixture_payload(pred: dict, league_code: str, date, kickoff: str) -> d
     best = pred["likely_scorelines"][0]
     summary_key, summary_args, summary_text = summarise_outcome(pred)
 
+    home_pct = round(pred["home_win"] * 100)
+    draw_pct = round(pred["draw"] * 100)
+    away_pct = round(pred["away_win"] * 100)
+    decision = decide(home_pct, draw_pct, away_pct)
+
     return {
         "league_code": league_code,
         "league": league_name,
@@ -130,9 +167,17 @@ def build_fixture_payload(pred: dict, league_code: str, date, kickoff: str) -> d
         "home_team": pred["home_team"],
         "away_team": pred["away_team"],
         # Percentages, pre-rounded so the UI never does maths.
-        "home_win_pct": round(pred["home_win"] * 100),
-        "draw_pct": round(pred["draw"] * 100),
-        "away_win_pct": round(pred["away_win"] * 100),
+        "home_win_pct": home_pct,
+        "draw_pct": draw_pct,
+        "away_win_pct": away_pct,
+        # The decision layer, stored so the app never has to re-derive it and
+        # so past forecasts keep the interpretation they were published with.
+        "model_pick": decision["model_pick"],
+        "confidence_band": decision["confidence_band"],
+        "margin_band": decision["margin_band"],
+        "confidence_margin": decision["confidence_margin"],
+        # Which engine produced this. Never rewritten.
+        "model_version": MODEL_VERSION,
         # Only published where backtesting showed a real edge over the
         # always-over baseline. None means the app hides the whole section.
         "over_2_5_pct": (

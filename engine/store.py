@@ -26,6 +26,8 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .performance import SCORED, performance
+
 ROOT = Path(__file__).resolve().parent.parent
 DB_PATH = Path(os.getenv("FORECAST_DB", ROOT / "data" / "forecasts.db"))
 SCHEMA_PATH = ROOT / "schema.sql"
@@ -38,6 +40,7 @@ LIST_FIELDS = [
     "home_team", "away_team",
     "home_win_pct", "draw_pct", "away_win_pct",
     "confidence_stars", "confidence_colour",
+    "model_pick", "confidence_band", "margin_band", "confidence_margin",
     "summary_key", "summary_args", "summary",
 ]
 DETAIL_FIELDS = LIST_FIELDS + [
@@ -54,6 +57,8 @@ FORECAST_FIELDS = [
     "likely_score", "likely_scorelines",
     "confidence", "confidence_stars", "confidence_colour",
     "summary", "summary_key", "summary_args",
+    "model_pick", "confidence_band", "margin_band", "confidence_margin",
+    "model_version",
     "generated_at",
 ]
 
@@ -71,8 +76,42 @@ def connect(path: Path | str | None = None) -> sqlite3.Connection:
     conn.execute("pragma journal_mode = WAL")
     conn.execute("pragma foreign_keys = ON")
     conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
+    _migrate(conn)
     conn.commit()
     return conn
+
+
+# Columns added after the first databases were created. "create table if not
+# exists" will not add a column to a table that already exists, so they are
+# applied here instead. Purely additive: no column is ever dropped or renamed,
+# and no stored forecast is touched.
+_ADDED_COLUMNS = {
+    "model_version": "text",
+    "confidence_margin": "real",
+    "confidence_band": "text",
+    "margin_band": "text",
+    "model_pick": "text",
+    "fixture_status": "text default 'pending'",
+    "actual_result": "text",
+    "brier_score": "real",
+}
+
+
+def _migrate(conn: sqlite3.Connection) -> list[str]:
+    """Add any missing columns. Safe to run on every connect."""
+    have = {r[1] for r in conn.execute("pragma table_info(predictions)")}
+    added = []
+    for name, decl in _ADDED_COLUMNS.items():
+        if name not in have:
+            conn.execute(f"alter table predictions add column {name} {decl}")
+            added.append(name)
+    if added:
+        # Existing rows predate fixture_status; anything already scored is
+        # finished by definition, everything else is still pending.
+        conn.execute("update predictions set fixture_status = "
+                     "case when was_correct is not null then 'finished' else 'pending' end "
+                     "where fixture_status is null")
+    return added
 
 
 def upsert_predictions(conn: sqlite3.Connection, rows: list[dict]) -> dict:
@@ -147,32 +186,80 @@ def upsert_ratings(conn: sqlite3.Connection, rows: list[dict]) -> int:
 def settle(conn: sqlite3.Connection, league_code: str, date: str,
            home_team: str, away_team: str,
            home_goals: int, away_goals: int) -> bool:
-    """Record a finished match's result. Never touches the forecast itself."""
+    """Record a finished match's result. Never touches the forecast itself.
+
+    Scoring uses the model_pick STORED with the forecast, not a fresh argmax,
+    so a later change to the decision rule cannot retroactively re-grade
+    history. Ties are recorded and Brier-scored but deliberately left
+    unscored for accuracy: picking one of two indistinguishable outcomes and
+    then calling it right or wrong would move the hit rate on luck alone.
+    """
     row = conn.execute(
-        "select id, home_win_pct, draw_pct, away_win_pct, was_correct "
+        "select id, home_win_pct, draw_pct, away_win_pct, model_pick, fixture_status "
         "from predictions where league_code=? and date=? and home_team=? and away_team=?",
         (league_code, date, home_team, away_team),
     ).fetchone()
-    if row is None or row["was_correct"] is not None:
+    if row is None or row["fixture_status"] == "finished":
         return False
 
     if home_goals > away_goals:
-        actual = "H"
+        actual, idx = "HOME", 0
     elif home_goals < away_goals:
-        actual = "A"
+        actual, idx = "AWAY", 2
     else:
-        actual = "D"
+        actual, idx = "DRAW", 1
 
-    pcts = {"H": row["home_win_pct"], "D": row["draw_pct"], "A": row["away_win_pct"]}
-    forecast = max(pcts, key=pcts.get)
+    # Brier score for this single match: squared error against the one-hot
+    # outcome, summed over the three possibilities. 0 is perfect, 2 the worst
+    # possible. Bounded, so one confident miss cannot dominate an average.
+    p = [row["home_win_pct"] / 100.0, row["draw_pct"] / 100.0, row["away_win_pct"] / 100.0]
+    onehot = [0.0, 0.0, 0.0]
+    onehot[idx] = 1.0
+    brier = sum((pi - oi) ** 2 for pi, oi in zip(p, onehot))
+
+    pick = row["model_pick"]
+    if pick and pick != "TIE":
+        correct = 1 if {"H": "HOME", "D": "DRAW", "A": "AWAY"}[pick] == actual else 0
+    elif pick == "TIE":
+        correct = None          # deliberately unscored, see docstring
+    else:
+        # Forecast predates the decision layer; fall back to the argmax that
+        # was in force when it was published.
+        pcts = {"HOME": row["home_win_pct"], "DRAW": row["draw_pct"], "AWAY": row["away_win_pct"]}
+        correct = 1 if max(pcts, key=pcts.get) == actual else 0
 
     conn.execute(
-        "update predictions set actual_home_goals=?, actual_away_goals=?, "
-        "was_correct=?, settled_at=? where id=?",
-        (home_goals, away_goals, 1 if forecast == actual else 0, _now(), row["id"]),
+        "update predictions set fixture_status='finished', actual_home_goals=?, "
+        "actual_away_goals=?, actual_result=?, was_correct=?, brier_score=?, "
+        "settled_at=? where id=?",
+        (home_goals, away_goals, actual, correct, round(brier, 6), _now(), row["id"]),
     )
     conn.commit()
     return True
+
+
+def mark_not_played(conn: sqlite3.Connection, league_code: str, date: str,
+                    home_team: str, away_team: str, status: str) -> bool:
+    """Record that a fixture will not produce a result.
+
+    Postponed, cancelled, abandoned and void matches must never count toward
+    accuracy in either direction - they are not wrong forecasts, they are
+    forecasts of a match that did not happen. was_correct stays NULL and the
+    status records why, so they leave the pending queue without polluting the
+    hit rate.
+    """
+    allowed = {"postponed", "cancelled", "abandoned", "void"}
+    if status not in allowed:
+        raise ValueError(f"status must be one of {sorted(allowed)}, got {status!r}")
+
+    cur = conn.execute(
+        "update predictions set fixture_status=?, settled_at=? "
+        "where league_code=? and date=? and home_team=? and away_team=? "
+        "and fixture_status != 'finished'",
+        (status, _now(), league_code, date, home_team, away_team),
+    )
+    conn.commit()
+    return cur.rowcount > 0
 
 
 def _atomic_write(path: Path, text: str) -> None:
@@ -210,7 +297,7 @@ def publish_json(conn: sqlite3.Connection, out_dir: Path, limit: int = 100) -> d
     # day. Fall back to the date when no kick-off time was published.
     upcoming = conn.execute(
         f"select {','.join(DETAIL_FIELDS)} from predictions "
-        "where was_correct is null and ("
+        "where fixture_status = 'pending' and ("
         "  (kickoff_utc is not null and kickoff_utc >= ?) or "
         "  (kickoff_utc is null and date >= ?)) "
         "order by coalesce(kickoff_utc, date) asc limit ?",
@@ -223,9 +310,9 @@ def publish_json(conn: sqlite3.Connection, out_dir: Path, limit: int = 100) -> d
 
     recent = conn.execute(
         "select league_code, league, date, home_team, away_team, "
-        "home_win_pct, draw_pct, away_win_pct, "
-        "actual_home_goals, actual_away_goals, was_correct "
-        "from predictions where was_correct is not null "
+        "home_win_pct, draw_pct, away_win_pct, model_pick, confidence_band, "
+        "actual_home_goals, actual_away_goals, actual_result, was_correct "
+        "from predictions where fixture_status = 'finished' "
         "order by date desc, id desc limit 20"
     ).fetchall()
 
@@ -237,7 +324,7 @@ def publish_json(conn: sqlite3.Connection, out_dir: Path, limit: int = 100) -> d
     awaiting = conn.execute(
         "select league_code, league, date, home_team, away_team, "
         "home_win_pct, draw_pct, away_win_pct "
-        "from predictions where was_correct is null and ("
+        "from predictions where fixture_status = 'pending' and ("
         "  (kickoff_utc is not null and kickoff_utc < ?) or "
         "  (kickoff_utc is null and date < ?)) "
         "order by coalesce(kickoff_utc, date) desc, id desc limit 20",
@@ -248,7 +335,7 @@ def publish_json(conn: sqlite3.Connection, out_dir: Path, limit: int = 100) -> d
     # "waiting (20)" while 35 are actually waiting would understate exactly the
     # thing this section exists to be honest about.
     awaiting_total = conn.execute(
-        "select count(*) from predictions where was_correct is null and ("
+        "select count(*) from predictions where fixture_status = 'pending' and ("
         "  (kickoff_utc is not null and kickoff_utc < ?) or "
         "  (kickoff_utc is null and date < ?))",
         (now_iso, today),
@@ -256,7 +343,7 @@ def publish_json(conn: sqlite3.Connection, out_dir: Path, limit: int = 100) -> d
 
     totals = conn.execute(
         "select count(*) n, sum(case when was_correct=1 then 1 else 0 end) hits "
-        "from predictions where was_correct is not null").fetchone()
+        f"from predictions where {SCORED}").fetchone()
     n_settled = totals["n"] or 0
     hits = totals["hits"] or 0
 
@@ -266,6 +353,10 @@ def publish_json(conn: sqlite3.Connection, out_dir: Path, limit: int = 100) -> d
             "accuracy_pct": round(100.0 * hits / n_settled, 1) if n_settled else None,
         },
         "by_league": by_league,
+        # The full analytics block: confidence bands, picked outcome, league,
+        # calibration, baselines and model versions. Computed in SQL from the
+        # stored record, so it costs nothing and cannot disagree with the data.
+        "performance": performance(conn),
         "recent": [dict(r) for r in recent],
         "awaiting": [dict(r) for r in awaiting],
         "awaiting_total": int(awaiting_total),
