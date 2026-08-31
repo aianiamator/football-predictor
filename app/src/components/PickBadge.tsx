@@ -41,7 +41,7 @@ export default function PickBadge({ p, lang }: { p: Prediction; lang: Lang }) {
   const colour = tie ? CONF_COLOUR.low : CONF_COLOUR[band] ?? CONF_COLOUR.low
 
   return (
-    <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1" style={{ fontSize: 16 }}>
+    <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2" style={{ fontSize: 18 }}>
       <span className="muted">{d.modelPick}:</span>
       <span className="font-bold" style={{ color: colour }}>
         {tie ? d.tooCloseToCall : team}
@@ -50,12 +50,16 @@ export default function PickBadge({ p, lang }: { p: Prediction; lang: Lang }) {
         <>
           <span
             className="rounded px-2 py-0.5 font-semibold text-white"
-            style={{ background: colour, fontSize: 14 }}
+            // 18px, matching the body-text floor. A confidence label is
+            // information, not decoration, and this audience is on cheap
+            // screens - shrinking it to make the row tidier would trade the
+            // wrong thing. The row wraps instead.
+            style={{ background: colour, fontSize: 18 }}
           >
             {d[CONF_LABEL[band] ?? "confLow"] as string}
           </span>
           {typeof p.confidence_margin === "number" && (
-            <span className="muted tabular-nums" style={{ fontSize: 15 }}>
+            <span className="muted tabular-nums" style={{ fontSize: 17 }}>
               {d.edge} {Math.round(p.confidence_margin)}pp
             </span>
           )}

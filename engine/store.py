@@ -111,7 +111,44 @@ def _migrate(conn: sqlite3.Connection) -> list[str]:
         conn.execute("update predictions set fixture_status = "
                      "case when was_correct is not null then 'finished' else 'pending' end "
                      "where fixture_status is null")
+
+    _backfill_decisions(conn)
     return added
+
+
+def _backfill_decisions(conn: sqlite3.Connection) -> int:
+    """Derive the decision fields for forecasts that predate the decision layer.
+
+    This does NOT alter a single forecast. The three percentages were locked
+    when the forecast was published; model_pick, confidence_band, margin_band
+    and confidence_margin are a deterministic function of those same numbers,
+    so computing them now yields exactly what the engine would have written at
+    the time. Without it, forecasts made before the layer existed would settle
+    into the overall hit rate but be invisible in the confidence breakdown -
+    silently biasing the very analysis those bands exist to support.
+
+    model_version is deliberately NOT backfilled. Which engine produced an old
+    forecast cannot be recovered from the stored row, and stamping a guess onto
+    it would be exactly the kind of quiet rewriting of history this store is
+    built to prevent. Those rows report as "pre-1.1.0".
+    """
+    from .run import decide   # imported here to avoid a circular import
+
+    rows = conn.execute(
+        "select id, home_win_pct, draw_pct, away_win_pct from predictions "
+        "where model_pick is null and home_win_pct is not null"
+    ).fetchall()
+    for r in rows:
+        d = decide(r["home_win_pct"], r["draw_pct"], r["away_win_pct"])
+        conn.execute(
+            "update predictions set model_pick=?, confidence_band=?, "
+            "margin_band=?, confidence_margin=? where id=?",
+            (d["model_pick"], d["confidence_band"], d["margin_band"],
+             d["confidence_margin"], r["id"]),
+        )
+    if rows:
+        conn.commit()
+    return len(rows)
 
 
 def upsert_predictions(conn: sqlite3.Connection, rows: list[dict]) -> dict:
