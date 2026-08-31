@@ -28,16 +28,34 @@ export default function Matches({
   }, [leagues])
 
   // Only offer filters for leagues that actually have fixtures right now.
-  const present = useMemo(() => {
+  // Drop anything that has already kicked off.
+  //
+  // The engine filters at publish time, but time keeps passing afterwards: a
+  // file published at 23:55 legitimately contained that morning's 10:15 match,
+  // and by the time someone opens the app it is long finished. Filtering here
+  // too means the list stays truthful between publishes instead of only at the
+  // moment one happens.
+  //
+  // `now` is captured per render rather than memoised, so simply reopening the
+  // app re-evaluates it.
+  const upcoming = useMemo(() => {
     if (!predictions) return []
-    const codes = new Set(predictions.map((p) => p.league_code))
+    const now = Date.now()
+    return predictions.filter((p) => {
+      if (p.kickoff_utc) return new Date(p.kickoff_utc).getTime() > now
+      // No kick-off time published: fall back to the calendar date.
+      return p.date >= new Date().toISOString().slice(0, 10)
+    })
+  }, [predictions])
+
+  const present = useMemo(() => {
+    const codes = new Set(upcoming.map((p) => p.league_code))
     return leagues.filter((l) => codes.has(l.code))
-  }, [predictions, leagues])
+  }, [upcoming, leagues])
 
   const shown = useMemo(() => {
-    if (!predictions) return []
-    return selected ? predictions.filter((p) => p.league_code === selected) : predictions
-  }, [predictions, selected])
+    return selected ? upcoming.filter((p) => p.league_code === selected) : upcoming
+  }, [upcoming, selected])
 
   return (
     <div>

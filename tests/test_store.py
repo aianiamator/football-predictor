@@ -212,6 +212,45 @@ def test_played_but_unsettled_is_published():
     return True
 
 
+def test_kickoff_not_calendar_date_decides_upcoming():
+    """A match is upcoming until it KICKS OFF, not until midnight.
+
+    Filtering on the calendar date kept a 10:15 fixture in the "upcoming" list
+    at 23:00 the same evening. A file published at 23:55 therefore contained 23
+    matches that had all finished hours earlier, which is what a reader saw.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    conn, _ = _fresh()
+    now = datetime.now(timezone.utc)
+    today = now.date().isoformat()
+
+    def row_at(home, offset_hours):
+        r = _row(home=home, away="Opponent", date=today)
+        r["kickoff_utc"] = (now + timedelta(hours=offset_hours)).isoformat()
+        return r
+
+    store.upsert_predictions(conn, [
+        row_at("KickedOffThisMorning", -9),   # same calendar day, long finished
+        row_at("KicksOffLater", +4),          # same calendar day, still to come
+    ])
+
+    out = Path(tempfile.mkdtemp())
+    res = store.publish_json(conn, out)
+    preds = json.loads((out / "predictions.json").read_text(encoding="utf-8"))
+    track = json.loads((out / "track-record.json").read_text(encoding="utf-8"))
+
+    upcoming = [p["home_team"] for p in preds]
+    waiting = [a["home_team"] for a in track["awaiting"]]
+    print(f"  same calendar day -> upcoming {upcoming}, awaiting {waiting}")
+
+    assert upcoming == ["KicksOffLater"], f"stale fixture still upcoming: {upcoming}"
+    assert waiting == ["KickedOffThisMorning"], f"played fixture not awaiting: {waiting}"
+    assert res["awaiting"] == 1
+    conn.close()
+    return True
+
+
 def main():
     tests = [
         ("insert then refresh while unsettled", test_insert_then_refresh),
@@ -221,6 +260,7 @@ def main():
         ("published JSON shape and atomicity", test_publish_shape_and_atomicity),
         ("misses are published, not filtered", test_misses_are_published_too),
         ("played but unsettled matches are visible", test_played_but_unsettled_is_published),
+        ("kick-off time, not calendar date, decides upcoming", test_kickoff_not_calendar_date_decides_upcoming),
     ]
     failed = 0
     for name, fn in tests:

@@ -201,13 +201,20 @@ def publish_json(conn: sqlite3.Connection, out_dir: Path, limit: int = 100) -> d
     meta.json          publish timestamp, for the app's cache freshness check
     """
     out_dir = Path(out_dir)
-    today = datetime.now(timezone.utc).date().isoformat()
+    now = datetime.now(timezone.utc)
+    today = now.date().isoformat()
+    now_iso = now.isoformat()
 
+    # Filter on KICK-OFF, not calendar date. A match at 10:15 is not "upcoming"
+    # at 23:00 the same evening, but a date-only filter keeps it in the list all
+    # day. Fall back to the date when no kick-off time was published.
     upcoming = conn.execute(
         f"select {','.join(DETAIL_FIELDS)} from predictions "
-        "where date >= ? and was_correct is null "
-        "order by date asc, kickoff asc limit ?",
-        (today, limit),
+        "where was_correct is null and ("
+        "  (kickoff_utc is not null and kickoff_utc >= ?) or "
+        "  (kickoff_utc is null and date >= ?)) "
+        "order by coalesce(kickoff_utc, date) asc limit ?",
+        (now_iso, today, limit),
     ).fetchall()
     predictions = [_row_to_dict(r, DETAIL_FIELDS) for r in upcoming]
 
@@ -230,17 +237,21 @@ def publish_json(conn: sqlite3.Connection, out_dir: Path, limit: int = 100) -> d
     awaiting = conn.execute(
         "select league_code, league, date, home_team, away_team, "
         "home_win_pct, draw_pct, away_win_pct "
-        "from predictions where was_correct is null and date < ? "
-        "order by date desc, id desc limit 20",
-        (today,),
+        "from predictions where was_correct is null and ("
+        "  (kickoff_utc is not null and kickoff_utc < ?) or "
+        "  (kickoff_utc is null and date < ?)) "
+        "order by coalesce(kickoff_utc, date) desc, id desc limit 20",
+        (now_iso, today),
     ).fetchall()
 
     # The list above is capped, but the COUNT must be the true total. Showing
     # "waiting (20)" while 35 are actually waiting would understate exactly the
     # thing this section exists to be honest about.
     awaiting_total = conn.execute(
-        "select count(*) from predictions where was_correct is null and date < ?",
-        (today,),
+        "select count(*) from predictions where was_correct is null and ("
+        "  (kickoff_utc is not null and kickoff_utc < ?) or "
+        "  (kickoff_utc is null and date < ?))",
+        (now_iso, today),
     ).fetchone()[0]
 
     totals = conn.execute(
