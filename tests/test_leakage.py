@@ -34,7 +34,20 @@ REFIT_DAYS = 7
 
 
 def _load(code: str = CODE) -> pd.DataFrame:
+    """Load one league, failing readably when the feed is unreachable.
+
+    Without this guard an empty frame reaches df["date"] and the audit reports
+    KeyError: 'date' - which tells a reader nothing about what went wrong. A
+    transient block on a CI runner produced exactly that, and the run looked
+    like a modelling failure when it was a network one.
+    """
     df = dataio.load_league(code)
+    if df.empty:
+        raise dataio.SourceUnavailable(
+            f"No data for {code}. football-data.co.uk is unreachable or "
+            "blocking this host. This is an infrastructure problem, not a "
+            "leak - the audit could not run, so nothing was verified."
+        )
     df["league"] = code
     return df
 
@@ -136,6 +149,24 @@ def main():
         ("accuracy plausibility ceiling", test_plausibility),
         ("placebo: shuffled scorelines", test_placebo),
     ]
+
+    # Check the data source ONCE, before running anything. A feed outage makes
+    # every check fail for the same irrelevant reason, and four cryptic errors
+    # in a row read as a broken model rather than a broken network - which is
+    # exactly how a transient block on a CI runner presented itself.
+    try:
+        _load()
+    except dataio.SourceUnavailable as exc:
+        print("=" * 68)
+        print("DATA SOURCE UNAVAILABLE - the audit could not run")
+        print("=" * 68)
+        print(f"  {exc}")
+        print()
+        print("  This is NOT a leak and NOT a model failure. Nothing was")
+        print("  verified, so nothing was published, which is the correct")
+        print("  outcome. The next scheduled run will retry.")
+        return 2      # distinct from 1, which means a check actually failed
+
     failed = 0
     for name, fn in tests:
         print(f"\n[ {name} ]")

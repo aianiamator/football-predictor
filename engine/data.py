@@ -9,11 +9,14 @@ Everything is cached to disk so you only download each season once
 from __future__ import annotations
 
 import io
+import logging
 import time
 from pathlib import Path
 
 import pandas as pd
 import requests
+
+log = logging.getLogger(__name__)
 
 BASE = "https://www.football-data.co.uk/mmz4281"
 FIXTURES_URL = "https://www.football-data.co.uk/fixtures.csv"
@@ -63,20 +66,71 @@ def season_codes(n_seasons: int = 8, end_year: int | None = None) -> list[str]:
     return codes
 
 
+class SourceUnavailable(RuntimeError):
+    """The upstream feed could not be reached for a league we need.
+
+    Raised rather than returning empty data, because an empty frame flows
+    downstream and surfaces as an unreadable KeyError several functions later -
+    which is exactly what happened: a transient block on the CI runner produced
+    "KeyError: 'date'" in the leakage audit, telling nobody anything useful.
+    """
+
+
+# Politeness gap between requests to the same host. The feed is free and
+# maintained by one person; hammering it is both rude and the fastest way to
+# get an IP blocked - which is the most likely explanation for a run that
+# works locally and fails on a shared CI runner.
+REQUEST_GAP_SECONDS = 0.4
+FETCH_ATTEMPTS = 3
+_last_request = 0.0
+
+
+def _polite_get(url: str) -> requests.Response:
+    """One HTTP GET, spaced out from the previous one."""
+    global _last_request
+    gap = REQUEST_GAP_SECONDS - (time.time() - _last_request)
+    if gap > 0:
+        time.sleep(gap)
+    _last_request = time.time()
+    return requests.get(url, timeout=30, headers={"User-Agent": "Mozilla/5.0"})
+
+
 def _fetch(url: str, cache_path: Path, max_age_hours: float | None) -> bytes | None:
+    """Fetch one CSV, preferring a fresh-enough cache, retrying on failure.
+
+    Returns None only when the file genuinely is not available - a season that
+    has not started, say. A transient network failure is retried rather than
+    being mistaken for "this season does not exist", which would silently
+    shrink the training set and change every forecast.
+    """
     if cache_path.exists():
         age_h = (time.time() - cache_path.stat().st_mtime) / 3600
         if max_age_hours is None or age_h < max_age_hours:
             return cache_path.read_bytes()
-    try:
-        resp = requests.get(url, timeout=30, headers={"User-Agent": "Mozilla/5.0"})
-        if resp.status_code != 200 or len(resp.content) < 200:
-            return cache_path.read_bytes() if cache_path.exists() else None
-        cache_path.parent.mkdir(parents=True, exist_ok=True)
-        cache_path.write_bytes(resp.content)
-        return resp.content
-    except requests.RequestException:
-        return cache_path.read_bytes() if cache_path.exists() else None
+
+    last_problem = "unknown"
+    for attempt in range(1, FETCH_ATTEMPTS + 1):
+        try:
+            resp = _polite_get(url)
+        except requests.RequestException as exc:
+            last_problem = f"{type(exc).__name__}"
+        else:
+            if resp.status_code == 200 and len(resp.content) >= 200:
+                cache_path.parent.mkdir(parents=True, exist_ok=True)
+                cache_path.write_bytes(resp.content)
+                return resp.content
+            # 404 means the season file does not exist yet. That is a fact, not
+            # a failure, so stop rather than retrying three times for nothing.
+            if resp.status_code == 404:
+                return cache_path.read_bytes() if cache_path.exists() else None
+            last_problem = f"HTTP {resp.status_code}"
+
+        if attempt < FETCH_ATTEMPTS:
+            time.sleep(2 ** attempt)   # 2s, then 4s
+
+    log.warning("%s: %s after %d attempts", url, last_problem, FETCH_ATTEMPTS)
+    # A stale cache beats nothing at all.
+    return cache_path.read_bytes() if cache_path.exists() else None
 
 
 def _read_csv(raw: bytes) -> pd.DataFrame:
@@ -148,16 +202,35 @@ def load_league(league: str, n_seasons: int = 8) -> pd.DataFrame:
     )
 
 
-def load_many(leagues: list[str] | None = None, n_seasons: int = 8) -> pd.DataFrame:
+def load_many(leagues: list[str] | None = None, n_seasons: int = 8,
+              require: bool = True) -> pd.DataFrame:
+    """Load several leagues.
+
+    An individual league may legitimately be empty - a season file that has not
+    been created yet. But if EVERY league comes back empty the feed is
+    unreachable, and continuing would train on nothing and publish nonsense. So
+    that case raises instead of returning an empty frame for someone else to
+    trip over three functions later.
+    """
     leagues = leagues or CORE_LEAGUES
-    frames = []
+    frames, missing = [], []
     for lg in leagues:
         df = load_league(lg, n_seasons)
         if df.empty:
+            missing.append(lg)
             print(f"  ! no data for {lg}")
         else:
             print(f"  {LEAGUES.get(lg, (lg,))[0]}: {len(df)} matches")
             frames.append(df)
+
+    if require and not frames:
+        raise SourceUnavailable(
+            f"football-data.co.uk returned nothing for any of {leagues}. "
+            "The feed is unreachable or blocking this host; this is an "
+            "infrastructure problem, not a modelling one. Nothing was published."
+        )
+    if missing:
+        log.warning("no data for %s", ", ".join(missing))
     return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
 
