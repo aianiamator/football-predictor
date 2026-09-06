@@ -49,7 +49,23 @@ jobs:
       - name: Results feed reachability
         if: always()
         continue-on-error: true
+        env:
+          FOOTBALL_DATA_TOKEN: ${{ secrets.FOOTBALL_DATA_TOKEN }}
         run: |
+          # Is the API usable from here at all? Length only - the value is
+          # never printed, and GitHub masks secrets in logs regardless.
+          if [ -n "$FOOTBALL_DATA_TOKEN" ]; then
+            echo "::notice title=api token::present, ${#FOOTBALL_DATA_TOKEN} characters"
+            code=$(curl -s -o /dev/null -m 25 \
+                   -H "X-Auth-Token: $FOOTBALL_DATA_TOKEN" \
+                   -w '%{http_code}' \
+                   "https://api.football-data.org/v4/competitions/PL/teams") \
+              || code="unreachable"
+            echo "::notice title=api probe::competitions/PL/teams -> $code (200 means working)"
+          else
+            echo "::error title=api token missing::The FOOTBALL_DATA_TOKEN secret is not set on this repository. Add it at Settings -> Secrets and variables -> Actions."
+          fi
+
           for u in "https://www.football-data.co.uk/fixtures.csv" \
                    "https://www.football-data.co.uk/mmz4281/2627/E0.csv" \
                    "https://www.football-data.co.uk/"; do

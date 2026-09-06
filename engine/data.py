@@ -321,9 +321,14 @@ def load_fixtures() -> pd.DataFrame:
         log.warning("API returned no fixtures; trying the CSV feed")
     except Exception as exc:                       # noqa: BLE001
         # Includes a missing token, which is a normal state on a machine that
-        # has not been set up rather than something to crash on.
+        # has not been set up rather than something to crash on. In CI it is
+        # not normal, and burying it in a log line cost a whole run to
+        # diagnose, so say it where the failure is visible.
         log.warning("API fixtures unavailable (%s); trying the CSV feed",
                     type(exc).__name__)
+        if os.environ.get("GITHUB_ACTIONS"):
+            print(f"::error title=API fixtures unavailable::{type(exc).__name__}: "
+                  f"{str(exc)[:300]}", flush=True)
 
     raw = _fetch(FIXTURES_URL, CACHE / "fixtures.csv", max_age_hours=3)
     if not raw:
