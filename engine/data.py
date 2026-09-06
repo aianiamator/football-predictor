@@ -305,7 +305,26 @@ def load_many(leagues: list[str] | None = None, n_seasons: int = 8,
 
 
 def load_fixtures() -> pd.DataFrame:
-    """Upcoming fixtures for the next week or so, all leagues."""
+    """Upcoming fixtures, preferring the API and falling back to the CSV feed.
+
+    Two sources rather than a swap. The API is tried first because it is the
+    one reachable from CI - football-data.co.uk returns 503 to those addresses
+    - but the CSV feed still works from an ordinary connection, so it stays as
+    a fallback instead of being deleted. Either alone keeps the app running.
+    """
+    try:
+        from engine import api_source
+        df = api_source.fixtures()
+        if not df.empty:
+            print(f"  fixtures: {len(df)} from api.football-data.org")
+            return df
+        log.warning("API returned no fixtures; trying the CSV feed")
+    except Exception as exc:                       # noqa: BLE001
+        # Includes a missing token, which is a normal state on a machine that
+        # has not been set up rather than something to crash on.
+        log.warning("API fixtures unavailable (%s); trying the CSV feed",
+                    type(exc).__name__)
+
     raw = _fetch(FIXTURES_URL, CACHE / "fixtures.csv", max_age_hours=3)
     if not raw:
         # An empty frame here is indistinguishable from "no matches scheduled",
@@ -313,9 +332,10 @@ def load_fixtures() -> pd.DataFrame:
         # a blocked feed and finishing green with nothing published. Say which
         # it is.
         raise SourceUnavailable(
-            "The fixture list could not be downloaded. Without it there is "
-            "nothing to forecast. This is a network problem, not an empty "
-            "calendar.")
+            "Neither source could supply a fixture list: the API did not "
+            "answer (or has no token) and football-data.co.uk could not be "
+            "downloaded. Without fixtures there is nothing to forecast. This "
+            "is a network problem, not an empty calendar.")
     df = _read_csv(raw)
     if not {"Div", "Date", "HomeTeam", "AwayTeam"}.issubset(df.columns):
         return pd.DataFrame()

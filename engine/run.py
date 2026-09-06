@@ -144,7 +144,8 @@ def plain_summary(pred: dict) -> str:
     return summarise_outcome(pred)[2]
 
 
-def build_fixture_payload(pred: dict, league_code: str, date, kickoff: str) -> dict:
+def build_fixture_payload(pred: dict, league_code: str, date, kickoff: str,
+                          kickoff_utc: str | None = None) -> dict:
     top_p = max(pred["home_win"], pred["draw"], pred["away_win"])
     band, stars, colour = confidence_band(top_p)
     league_name, country, flag = dataio.LEAGUES.get(league_code, (league_code, "", ""))
@@ -162,8 +163,11 @@ def build_fixture_payload(pred: dict, league_code: str, date, kickoff: str) -> d
         "country": country,
         "date": str(pd.to_datetime(date).date()),
         "kickoff": str(kickoff) if kickoff else "",
-        # UTC, so the app can render the time in the reader's own zone.
-        "kickoff_utc": kickoff_to_utc(date, kickoff),
+        # UTC, so the app can render the time in the reader's own zone. A
+        # source that already states UTC passes it straight through; converting
+        # it again as if it were UK local would move every kick-off by an hour
+        # for half the year.
+        "kickoff_utc": kickoff_utc or kickoff_to_utc(date, kickoff),
         "home_team": pred["home_team"],
         "away_team": pred["away_team"],
         # Percentages, pre-rounded so the UI never does maths.
@@ -276,7 +280,8 @@ def run(leagues: list[str] | None = None, n_seasons: int = 8) -> list[dict]:
                 continue
             pred = model.predict(fx["home_team"], fx["away_team"])
             payloads.append(
-                build_fixture_payload(pred, league, fx["date"], fx.get("kickoff", ""))
+                build_fixture_payload(pred, league, fx["date"],
+                                      fx.get("kickoff", ""), fx.get("kickoff_utc"))
             )
             made += 1
         print(f"  {name}: {len(model.teams)} teams rated, {made} fixtures predicted")

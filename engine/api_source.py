@@ -37,6 +37,11 @@ from pathlib import Path
 import pandas as pd
 import requests
 
+# football-data.co.uk publishes kick-offs in UK local time and the rest of the
+# engine assumes that, so API times are converted into it rather than the other
+# way round. Changing the convention would re-date historical forecasts.
+UK = "Europe/London"
+
 BASE = "https://api.football-data.org/v4"
 ALIASES = Path(__file__).resolve().parent.parent / "data" / "team_aliases.json"
 
@@ -155,11 +160,18 @@ def _rows(payload: dict, league: str, table: dict[str, str],
         if finished and (score.get("home") is None or score.get("away") is None):
             continue
         kickoff = pd.Timestamp(m["utcDate"])
+        # The API states kick-off in UTC; football-data.co.uk states it in UK
+        # local time, and build_fixture_payload converts UK local -> UTC. Handing
+        # it a UTC time would put every kick-off an hour out through British
+        # summer time, so give it the UK-local form it expects AND the UTC value
+        # to use directly. `date` stays the UK-local calendar date, because that
+        # is the date every existing forecast is stored under.
+        local = kickoff.tz_convert(UK)
         row = {
             "league": league,
-            "date": kickoff.tz_convert(None).normalize(),
+            "date": local.tz_localize(None).normalize(),
             "kickoff_utc": kickoff.isoformat(),
-            "kickoff": kickoff.strftime("%H:%M"),
+            "kickoff": local.strftime("%H:%M"),
             "home_team": to_store_name(m["homeTeam"]["name"], table),
             "away_team": to_store_name(m["awayTeam"]["name"], table),
             "status": m["status"],

@@ -19,6 +19,9 @@ data/raw/
 data_cache/
 output/
 data/*.json
+# ...except the team-name mapping, which is source, not output. CI cannot
+# settle a single match without it.
+!data/team_aliases.json
 *.log
 
 # Node / app

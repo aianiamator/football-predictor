@@ -67,12 +67,26 @@ jobs:
       - name: Store guarantees
         run: python -m tests.test_store
 
+      # The join between the two sources. A name pointed at the wrong club
+      # settles a forecast against a different match and nothing looks wrong
+      # on screen, so this runs on every commit. Needs no token.
+      - name: Team name mapping
+        run: python -m tests.test_aliases
+
+      # The token is read from the environment and never written to disk or
+      # printed. football-data.co.uk returns 503 to these runners, so the API
+      # is the source that actually works here; the CSV feed stays as a
+      # fallback for runs from an ordinary connection.
       - name: Forecast upcoming fixtures
         if: github.event.schedule != '0 */6 * * *'
+        env:
+          FOOTBALL_DATA_TOKEN: ${{ secrets.FOOTBALL_DATA_TOKEN }}
         run: python -m engine.run
 
       - name: Settle finished matches
         if: github.event.schedule != '30 5 * * *'
+        env:
+          FOOTBALL_DATA_TOKEN: ${{ secrets.FOOTBALL_DATA_TOKEN }}
         run: python -m engine.settle
 
       - name: Publish

@@ -88,10 +88,14 @@ def main(write: bool = False) -> int:
     if write:
         out = ROOT / "data" / "team_aliases.json"
         existing = json.loads(out.read_text(encoding="utf-8")) if out.exists() else {}
-        existing.update(mapping)          # hand-added entries always win nothing
-        out.write_text(json.dumps(dict(sorted(existing.items())), indent=2,
+        # Hand-confirmed entries win. The automatic pass exists to save typing,
+        # not to overrule a decision someone has already checked - and the
+        # near-misses above show why: it offered 'Villarreal' for Atletico
+        # Madrid and 'Sp Braga' for Benfica.
+        merged = {**mapping, **existing}
+        out.write_text(json.dumps(dict(sorted(merged.items())), indent=2,
                                   ensure_ascii=False) + "\n", encoding="utf-8")
-        print(f"\nwrote {out.relative_to(ROOT)} ({len(existing)} names)")
+        print(f"\nwrote {out.relative_to(ROOT)} ({len(merged)} names)")
 
     return 1 if unresolved else 0
 
