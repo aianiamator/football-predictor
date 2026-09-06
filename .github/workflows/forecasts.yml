@@ -40,6 +40,25 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      # Says, in the run's annotations, whether the upstream feed answers this
+      # runner at all - and with what. A failing job otherwise only reports an
+      # exit code, and the difference between "403, we are blocked", "timeout,
+      # the site is down" and "DNS" decides what to do next. Annotations are
+      # readable without opening the logs, so this survives being diagnosed
+      # from a phone.
+      - name: Results feed reachability
+        if: always()
+        continue-on-error: true
+        run: |
+          for u in "https://www.football-data.co.uk/fixtures.csv" \
+                   "https://www.football-data.co.uk/mmz4281/2627/E0.csv" \
+                   "https://www.football-data.co.uk/"; do
+            out=$(curl -sS -o /dev/null -m 25 -A "Mozilla/5.0" \
+                  -w '%{http_code} %{size_download}b %{time_total}s' "$u" 2>&1) \
+              || out="unreachable: $out"
+            echo "::notice title=feed probe::${u#https://www.football-data.co.uk} -> $out"
+          done
+
       # The guard that matters most. If this fails, future information is
       # reaching the training data and nothing should be published.
       - name: Leakage audit

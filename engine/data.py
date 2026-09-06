@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import io
 import logging
+import os
 import time
 from pathlib import Path
 
@@ -145,6 +146,13 @@ def _fetch(url: str, cache_path: Path, max_age_hours: float | None) -> bytes | N
 
     log.warning("%s: %s after %d attempts", url, last_problem, FETCH_ATTEMPTS)
     _failed_urls.append(f"{url} ({last_problem})")
+    if os.environ.get("GITHUB_ACTIONS"):
+        # Surface the HTTP-client view as a run annotation. The workflow's curl
+        # probe says whether the host answers at all; this says what Python saw
+        # for the same host. If curl gets 200 and requests does not, the block
+        # is on the client, not the network.
+        print(f"::error title=feed fetch failed::{url} -> {last_problem} "
+              f"after {FETCH_ATTEMPTS} attempts", flush=True)
     # A stale cache beats nothing at all.
     return cache_path.read_bytes() if cache_path.exists() else None
 
