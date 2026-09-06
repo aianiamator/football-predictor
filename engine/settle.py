@@ -48,10 +48,30 @@ def settle(leagues: list[str] | None = None, n_seasons: int = 2,
         print(f"{len(pending)} forecast(s) awaiting a result.")
 
         # Recent seasons only: nothing older can still be unsettled in practice.
+        dataio.reset_fetch_failures()
         results = dataio.load_many(leagues, n_seasons=n_seasons)
         if results.empty:
             print("No results available; leaving everything as it is.")
             return {"settled": 0, "pending": len(pending), "not_found": 0}
+
+        # Finished seasons now come from the committed snapshot, so `results`
+        # is never empty. That would let a blocked feed settle nothing and
+        # still finish green, which is worse than failing outright: a result
+        # that arrived today exists only in the live season file. If every
+        # live fetch failed, say so and stop.
+        blocked = dataio.fetch_failures()
+        if len(blocked) >= len(leagues):
+            detail = "".join(f"\n    {u}" for u in blocked[:4])
+            raise SystemExit(
+                "\n" + "=" * 68
+                + "\nRESULTS FEED UNAVAILABLE - nothing was settled\n"
+                + "=" * 68
+                + f"\n  {len(blocked)} of {len(leagues)} leagues could not be refreshed:"
+                + detail
+                + f"\n\n  {len(pending)} forecast(s) stay marked 'awaiting a result',"
+                "\n  which is exactly what they are. Nothing was scored against"
+                "\n  stale data and no forecast was altered. The next run retries.\n"
+            )
 
         cutoff = pd.Timestamp.now() - pd.Timedelta(hours=MIN_AGE_HOURS)
         results = results[results["date"] <= cutoff]

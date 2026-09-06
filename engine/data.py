@@ -84,6 +84,21 @@ REQUEST_GAP_SECONDS = 0.4
 FETCH_ATTEMPTS = 3
 _last_request = 0.0
 
+# URLs that failed every attempt during the current job. The history snapshot
+# means a blocked feed no longer empties the training data - which is good, but
+# it also means a caller can no longer detect a block by finding no rows. Jobs
+# that need FRESH data (settling results, listing fixtures) ask here instead of
+# quietly succeeding on nine-year-old history.
+_failed_urls: list[str] = []
+
+
+def reset_fetch_failures() -> None:
+    _failed_urls.clear()
+
+
+def fetch_failures() -> list[str]:
+    return list(_failed_urls)
+
 
 def _polite_get(url: str) -> requests.Response:
     """One HTTP GET, spaced out from the previous one."""
@@ -129,6 +144,7 @@ def _fetch(url: str, cache_path: Path, max_age_hours: float | None) -> bytes | N
             time.sleep(2 ** attempt)   # 2s, then 4s
 
     log.warning("%s: %s after %d attempts", url, last_problem, FETCH_ATTEMPTS)
+    _failed_urls.append(f"{url} ({last_problem})")
     # A stale cache beats nothing at all.
     return cache_path.read_bytes() if cache_path.exists() else None
 
@@ -178,16 +194,62 @@ def _parse(raw: bytes, league: str, season: str) -> pd.DataFrame:
     return out.dropna(subset=["date", "home_goals", "away_goals"])
 
 
+HISTORY = Path(__file__).resolve().parent.parent / "data" / "history.csv.gz"
+_history_cache: pd.DataFrame | None = None
+
+
+def history() -> pd.DataFrame:
+    """Finished seasons, read from the committed snapshot.
+
+    A season that has ended never changes, but the engine used to re-download
+    eight years of them on every run: 56 files, five times a day, from a free
+    site maintained by one person. That is both wasteful and the most likely
+    reason the CI runner started being refused. The snapshot removes those
+    requests entirely, leaving only the season actually in progress.
+
+    Regenerate it with:  python -m scripts.build_history
+    """
+    global _history_cache
+    if _history_cache is None:
+        if not HISTORY.exists():
+            log.warning("no history snapshot at %s; falling back to downloads", HISTORY)
+            _history_cache = pd.DataFrame()
+        else:
+            df = pd.read_csv(HISTORY, compression="gzip", parse_dates=["date"])
+            df["season"] = df["season"].astype(str).str.zfill(4)
+            # A CSV round-trip turns the goal columns into floats. Every value
+            # is unchanged, but the model's input dtype should not depend on
+            # whether a season came from the snapshot or the network.
+            for col in ("home_goals", "away_goals"):
+                df[col] = df[col].astype("int64")
+            _history_cache = df
+    return _history_cache
+
+
 def load_league(league: str, n_seasons: int = 8) -> pd.DataFrame:
-    """All available results for one league across recent seasons."""
+    """All available results for one league across recent seasons.
+
+    Finished seasons come from the committed snapshot; only the season in
+    progress is fetched. Any finished season the snapshot happens to be missing
+    still falls back to a download, so a stale snapshot degrades gracefully
+    rather than silently shrinking the training set.
+    """
     frames = []
     codes = season_codes(n_seasons)
-    for i, season in enumerate(codes):
-        is_current = i == len(codes) - 1
+    current, finished = codes[-1], codes[:-1]
+
+    hist = history()
+    if not hist.empty:
+        have = hist[(hist["league"] == league) & (hist["season"].isin(finished))]
+        if not have.empty:
+            frames.append(have)
+            finished = [s for s in finished if s not in set(have["season"])]
+
+    for season in finished + [current]:
         raw = _fetch(
             f"{BASE}/{season}/{league}.csv",
             CACHE / season / f"{league}.csv",
-            max_age_hours=6 if is_current else None,
+            max_age_hours=6 if season == current else None,
         )
         if raw:
             parsed = _parse(raw, league, season)
@@ -238,7 +300,14 @@ def load_fixtures() -> pd.DataFrame:
     """Upcoming fixtures for the next week or so, all leagues."""
     raw = _fetch(FIXTURES_URL, CACHE / "fixtures.csv", max_age_hours=3)
     if not raw:
-        return pd.DataFrame()
+        # An empty frame here is indistinguishable from "no matches scheduled",
+        # and the caller used to print exactly that - blaming the calendar for
+        # a blocked feed and finishing green with nothing published. Say which
+        # it is.
+        raise SourceUnavailable(
+            "The fixture list could not be downloaded. Without it there is "
+            "nothing to forecast. This is a network problem, not an empty "
+            "calendar.")
     df = _read_csv(raw)
     if not {"Div", "Date", "HomeTeam", "AwayTeam"}.issubset(df.columns):
         return pd.DataFrame()

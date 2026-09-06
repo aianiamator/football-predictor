@@ -217,7 +217,19 @@ def run(leagues: list[str] | None = None, n_seasons: int = 8) -> list[dict]:
         raise SystemExit("No historical data available.")
 
     print("Loading upcoming fixtures...")
-    fixtures = dataio.load_fixtures()
+    try:
+        fixtures = dataio.load_fixtures()
+    except dataio.SourceUnavailable as exc:
+        raise SystemExit(
+            "\n" + "=" * 68
+            + "\nFIXTURE LIST UNAVAILABLE - nothing was forecast\n"
+            + "=" * 68
+            + f"\n  {exc}\n"
+            "\n  Historical results loaded fine, so the engine and the model are"
+            "\n  healthy. Only the upcoming-fixture feed is unreachable."
+            "\n  Previously published forecasts are untouched and the site keeps"
+            "\n  serving them. The next scheduled run will retry.\n"
+        )
     if not fixtures.empty:
         # fixtures.csv keeps recently-played games for a few days. Publishing
         # those as forecasts would be wrong on its face and would collide with
